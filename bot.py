@@ -42,6 +42,7 @@ def get_market_summary():
         "^IXIC": "NASDAQ",
         "BTC-USD": "BTC",
         "ETH-USD": "ETH",
+        "GC=F": "Gold",  # 👈 добавили золото
     }
     lines = []
     for symbol, name in tickers.items():
