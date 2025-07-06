@@ -7,21 +7,21 @@ from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from datetime import datetime
 import pytz
 
-# Логирование
+# Logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 TIMEZONE = os.getenv("TIMEZONE", "UTC")
 USER_TIME = {}
-scheduler = AsyncIOScheduler(timezone=pytz.utc)
 
-# Команды
+# /start command
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
         "Hi! I’ll send you a daily market summary. Set your time with /settime, e.g., /settime 10:00"
     )
 
+# /settime command
 async def set_time(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if len(context.args) != 1:
         return await update.message.reply_text("Please use HH:MM format, e.g., /settime 09:30")
@@ -33,11 +33,12 @@ async def set_time(update: Update, context: ContextTypes.DEFAULT_TYPE):
     except ValueError:
         await update.message.reply_text("Invalid time format. Use HH:MM")
 
+# /now command
 async def now(update: Update, context: ContextTypes.DEFAULT_TYPE):
     summary = get_market_summary()
     await update.message.reply_text(summary, parse_mode="Markdown")
 
-# Сводка рынка
+# Market summary
 def get_market_summary():
     tickers = {
         "^GSPC": "S&P 500",
@@ -57,31 +58,30 @@ def get_market_summary():
     now_date = datetime.now().strftime("%Y-%m-%d")
     return f"📈 *Markets on {now_date}:*\n" + "\n".join(lines)
 
-# Периодическая задача
+# Scheduled task
 async def scheduled_job(app):
     for user_id, (h, m, tz) in USER_TIME.items():
         now_ = datetime.now(tz)
         if now_.hour == h and now_.minute == m:
+            text = get_market_summary()
             try:
-                text = get_market_summary()
                 await app.bot.send_message(chat_id=user_id, text=text, parse_mode="Markdown")
             except Exception as e:
-                logger.warning(f"Failed to send update: {e}")
+                logger.warning(f"Error sending message: {e}")
 
-# Функция инициализации
-async def post_init(app):
-    scheduler.add_job(lambda: scheduled_job(app), trigger="interval", minutes=1)
-    scheduler.start()
-    logger.info("Scheduler started")
-
-# Запуск
+# Entry point
 if __name__ == "__main__":
+    from telegram.ext import ApplicationBuilder
+
     app = ApplicationBuilder().token(BOT_TOKEN).build()
 
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("settime", set_time))
     app.add_handler(CommandHandler("now", now))
 
-    app.post_init = post_init
+    scheduler = AsyncIOScheduler(timezone=pytz.utc)
+    import asyncio
+    scheduler.add_job(lambda: asyncio.create_task(scheduled_job(app)), trigger="interval", minutes=1)
+    scheduler.start()
 
     app.run_polling()
