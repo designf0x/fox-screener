@@ -69,7 +69,15 @@ async def main():
     app.add_handler(CommandHandler("now", now))
 
     scheduler = AsyncIOScheduler(timezone=pytz.utc)
-    scheduler.add_job(lambda: asyncio.create_task(scheduled_job(app)), trigger="interval", minutes=1)
+    
+    def run_async_job():
+    loop = asyncio.get_event_loop()
+    if loop.is_running():
+        loop.create_task(scheduled_job(app))
+    else:
+        loop.run_until_complete(scheduled_job(app))
+
+    scheduler.add_job(run_async_job, trigger="interval", minutes=1)
     scheduler.start()
 
     await app.run_polling()
