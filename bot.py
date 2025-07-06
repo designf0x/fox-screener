@@ -57,7 +57,8 @@ def get_market_summary():
         lines.append(f"— *{name}*: {price:.2f} ({change:+.2f}%)")
     now_date = datetime.now().strftime("%Y-%m-%d")
     return f"📈 *Markets on {now_date}:*
-" + "\n".join(lines)
+" + "
+".join(lines)
 
 # Scheduled task
 async def scheduled_job(app):
