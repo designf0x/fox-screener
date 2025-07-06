@@ -13,7 +13,6 @@ logger = logging.getLogger(__name__)
 
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 TIMEZONE = os.getenv("TIMEZONE", "UTC")
-ADMIN_ID = os.getenv("ADMIN_ID")
 USER_TIME = {}
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -53,24 +52,18 @@ def get_market_summary():
         price = today["Close"]
         lines.append(f"— *{name}*: {price:.2f} ({change:+.2f}%)")
     now_date = datetime.now().strftime("%Y-%m-%d")
-    return f"📈 *Markets on {now_date}:*
-" + "
-".join(lines)
+    return f"📈 *Markets on {now_date}:*\n" + "\n".join(lines)
 
 async def scheduled_job(app):
-    try:
-        for user_id, (h, m, tz) in USER_TIME.items():
-            now_ = datetime.now(tz)
-            if now_.hour == h and now_.minute == m:
-                text = get_market_summary()
-                await app.bot.send_message(chat_id=user_id, text=text, parse_mode="Markdown")
-    except Exception as e:
-        if ADMIN_ID:
-            await app.bot.send_message(chat_id=int(ADMIN_ID), text=f"❗️Error:
-{e}")
+    for user_id, (h, m, tz) in USER_TIME.items():
+        now_ = datetime.now(tz)
+        if now_.hour == h and now_.minute == m:
+            text = get_market_summary()
+            await app.bot.send_message(chat_id=user_id, text=text, parse_mode="Markdown")
 
 async def main():
     app = ApplicationBuilder().token(BOT_TOKEN).build()
+
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("settime", set_time))
     app.add_handler(CommandHandler("now", now))
@@ -82,8 +75,5 @@ async def main():
     await app.run_polling()
 
 if __name__ == "__main__":
-    try:
-        loop = asyncio.get_event_loop()
-        loop.run_until_complete(main())
-    except RuntimeError:
-        asyncio.ensure_future(main())
+    import asyncio
+    asyncio.run(main())
