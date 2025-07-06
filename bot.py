@@ -52,8 +52,8 @@ def get_market_summary():
         price = today["Close"]
         lines.append(f"— *{name}*: {price:.2f} ({change:+.2f} %)")
     now_date = datetime.now().strftime("%Y-%m-%d")
-    return f"📈 *Рынки на {now_date}:*
-" + "\n".join(lines)
+    return f"📈 *Рынки на {now_date}:*\n" + "\n".join(lines)
+
 
 def schedule_jobs(updater: Updater):
     scheduler = BackgroundScheduler(timezone=pytz.utc)
