@@ -1,19 +1,24 @@
 import os
 import logging
+import asyncio
+from datetime import datetime
+
+import pytz
+import yfinance as yf
 from telegram import Update
 from telegram.ext import ApplicationBuilder, CommandHandler, ContextTypes
-import yfinance as yf
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
-from datetime import datetime
-import pytz
-import asyncio
 
+# Logging setup
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
+# Bot token and timezone
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 TIMEZONE = os.getenv("TIMEZONE", "UTC")
-USER_TIME = {}
+USER_TIME = {}  # user_id: (hour, minute, tz)
+
+# --- Command Handlers --- #
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
@@ -35,6 +40,8 @@ async def now(update: Update, context: ContextTypes.DEFAULT_TYPE):
     summary = get_market_summary()
     await update.message.reply_text(summary, parse_mode="Markdown")
 
+# --- Market Summary --- #
+
 def get_market_summary():
     tickers = {
         "^GSPC": "S&P 500",
@@ -54,12 +61,16 @@ def get_market_summary():
     now_date = datetime.now().strftime("%Y-%m-%d")
     return f"📈 *Markets on {now_date}:*\n" + "\n".join(lines)
 
+# --- Scheduled Job --- #
+
 async def scheduled_job(app):
     for user_id, (h, m, tz) in USER_TIME.items():
         now_ = datetime.now(tz)
         if now_.hour == h and now_.minute == m:
             text = get_market_summary()
             await app.bot.send_message(chat_id=user_id, text=text, parse_mode="Markdown")
+
+# --- Main --- #
 
 async def main():
     app = ApplicationBuilder().token(BOT_TOKEN).build()
@@ -69,20 +80,12 @@ async def main():
     app.add_handler(CommandHandler("now", now))
 
     scheduler = AsyncIOScheduler(timezone=pytz.utc)
-
-    def run_async_job():
-        loop = asyncio.get_event_loop()
-        loop.create_task(scheduled_job(app))
-
-    scheduler.add_job(run_async_job, trigger="interval", minutes=1)
+    scheduler.add_job(lambda: asyncio.create_task(scheduled_job(app)), trigger="interval", minutes=1)
     scheduler.start()
 
     await app.run_polling()
 
-
 if __name__ == "__main__":
-    import asyncio
     import nest_asyncio
-
     nest_asyncio.apply()
     asyncio.run(main())
