@@ -9,16 +9,13 @@ import pytz
 import asyncio
 import nest_asyncio
 
-# Логгирование
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-# Конфиг
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 TIMEZONE = os.getenv("TIMEZONE", "UTC")
 USER_TIME = {}
 
-# Команды
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
         "Hi! I’ll send you a daily market summary. Set your time with /settime, e.g., /settime 10:00"
@@ -39,7 +36,6 @@ async def now(update: Update, context: ContextTypes.DEFAULT_TYPE):
     summary = get_market_summary()
     await update.message.reply_text(summary, parse_mode="Markdown")
 
-# Рыночная сводка
 def get_market_summary():
     tickers = {
         "^GSPC": "S&P 500",
@@ -59,7 +55,6 @@ def get_market_summary():
     now_date = datetime.now().strftime("%Y-%m-%d")
     return f"📈 *Markets on {now_date}:*\n" + "\n".join(lines)
 
-# Планировщик
 async def scheduled_job(app):
     for user_id, (h, m, tz) in USER_TIME.items():
         now_ = datetime.now(tz)
@@ -67,7 +62,6 @@ async def scheduled_job(app):
             text = get_market_summary()
             await app.bot.send_message(chat_id=user_id, text=text, parse_mode="Markdown")
 
-# Главная функция
 async def main():
     app = ApplicationBuilder().token(BOT_TOKEN).build()
 
@@ -76,16 +70,16 @@ async def main():
     app.add_handler(CommandHandler("now", now))
 
     scheduler = AsyncIOScheduler(timezone=pytz.utc)
+    
+    # Используем async-обертку, чтобы гарантировать выполнение в loop
+    async def job_wrapper():
+        await scheduled_job(app)
 
-    def schedule_wrapper():
-        asyncio.get_event_loop().create_task(scheduled_job(app))
-
-    scheduler.add_job(schedule_wrapper, trigger="interval", minutes=1)
+    scheduler.add_job(job_wrapper, "interval", minutes=1)
     scheduler.start()
 
     await app.run_polling()
 
-# Запуск
 if __name__ == "__main__":
     nest_asyncio.apply()
     asyncio.run(main())
