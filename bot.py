@@ -1,46 +1,44 @@
 import os
 import logging
 from telegram import Update
-from telegram.ext import Updater, CommandHandler, CallbackContext
+from telegram.ext import ApplicationBuilder, CommandHandler, ContextTypes
 import yfinance as yf
-from apscheduler.schedulers.background import BackgroundScheduler
+from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from datetime import datetime
 import pytz
 
-# Настройка логирования
+# Логирование
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-# Переменные окружения
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 TIMEZONE = os.getenv("TIMEZONE", "UTC")
 USER_TIME = {}
 
 # Команда /start
-def start(update: Update, context: CallbackContext):
-    update.message.reply_text(
+async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await update.message.reply_text(
         "Привет! Я пришлю сводку по рынку. Установи время командой /settime, например: /settime 10:00"
     )
 
 # Команда /settime
-def set_time(update: Update, context: CallbackContext):
-    text = update.message.text.split(maxsplit=1)
-    if len(text) < 2:
-        return update.message.reply_text("Укажи время в формате ЧЧ:ММ, например: /settime 09:30")
+async def set_time(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if len(context.args) != 1:
+        return await update.message.reply_text("Укажи время в формате ЧЧ:ММ, например: /settime 09:30")
     try:
-        t = datetime.strptime(text[1], "%H:%M").time()
+        t = datetime.strptime(context.args[0], "%H:%M").time()
         tz = pytz.timezone(TIMEZONE)
         USER_TIME[update.effective_user.id] = (t.hour, t.minute, tz)
-        update.message.reply_text(f"🕒 Окей, буду присылать каждый день в {text[1]} {TIMEZONE}")
+        await update.message.reply_text(f"🕒 Окей, буду присылать каждый день в {context.args[0]} {TIMEZONE}")
     except ValueError:
-        update.message.reply_text("Неверный формат — используй ЧЧ:ММ")
+        await update.message.reply_text("Неверный формат — используй ЧЧ:ММ")
 
 # Команда /now
-def now(update: Update, context: CallbackContext):
-    text = get_market_summary()
-    update.message.reply_text(text, parse_mode="Markdown")
+async def now(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    summary = get_market_summary()
+    await update.message.reply_text(summary, parse_mode="Markdown")
 
-# Генерация рыночной сводки
+# Генерация текста рыночной сводки
 def get_market_summary():
     tickers = {
         "^GSPC": "S&P 500",
@@ -60,33 +58,33 @@ def get_market_summary():
     now_date = datetime.now().strftime("%Y-%m-%d")
     return f"📈 *Рынки на {now_date}:*\n" + "\n".join(lines)
 
-# Планировщик задач
-def schedule_jobs(updater: Updater):
-    scheduler = BackgroundScheduler(timezone=pytz.utc)
+# Планировщик
+async def scheduled_job(app):
+    for user_id, (h, m, tz) in USER_TIME.items():
+        now_ = datetime.now(tz)
+        if now_.hour == h and now_.minute == m:
+            text = get_market_summary()
+            try:
+                await app.bot.send_message(chat_id=user_id, text=text, parse_mode="Markdown")
+            except Exception as e:
+                logger.warning(f"Ошибка при отправке: {e}")
+
+# Главная функция
+async def main():
+    app = ApplicationBuilder().token(BOT_TOKEN).build()
+
+    app.add_handler(CommandHandler("start", start))
+    app.add_handler(CommandHandler("settime", set_time))
+    app.add_handler(CommandHandler("now", now))
+
+    # Планировщик
+    scheduler = AsyncIOScheduler(timezone=pytz.utc)
+    scheduler.add_job(lambda: scheduled_job(app), trigger="interval", minutes=1)
     scheduler.start()
 
-    def job():
-        for user_id, (h, m, tz) in USER_TIME.items():
-            now_ = datetime.now(tz)
-            if now_.hour == h and now_.minute == m:
-                text = get_market_summary()
-                updater.bot.send_message(chat_id=user_id, text=text, parse_mode="Markdown")
+    await app.run_polling()
 
-    scheduler.add_job(job, 'interval', minutes=1)
-
-# Точка входа
-def main():
-    updater = Updater(BOT_TOKEN)
-    dp = updater.dispatcher
-
-    dp.add_handler(CommandHandler("start", start))
-    dp.add_handler(CommandHandler("settime", set_time))
-    dp.add_handler(CommandHandler("now", now))
-
-    schedule_jobs(updater)
-    updater.start_polling()
-    updater.idle()
-
+# Запуск
 if __name__ == "__main__":
-    main()
-
+    import asyncio
+    asyncio.run(main())
