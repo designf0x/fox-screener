@@ -69,23 +69,20 @@ async def main():
     app.add_handler(CommandHandler("now", now))
 
     scheduler = AsyncIOScheduler(timezone=pytz.utc)
-    
+
     def run_async_job():
-    loop = asyncio.get_event_loop()
-    if loop.is_running():
+        loop = asyncio.get_event_loop()
         loop.create_task(scheduled_job(app))
-    else:
-        loop.run_until_complete(scheduled_job(app))
 
     scheduler.add_job(run_async_job, trigger="interval", minutes=1)
     scheduler.start()
 
     await app.run_polling()
 
+
 if __name__ == "__main__":
     import asyncio
     import nest_asyncio
-    nest_asyncio.apply()
-    asyncio.get_event_loop().create_task(main())
-    asyncio.get_event_loop().run_forever()
 
+    nest_asyncio.apply()
+    asyncio.run(main())
