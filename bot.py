@@ -7,7 +7,7 @@ from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from datetime import datetime
 import pytz
 
-# Логирование
+# Logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
@@ -15,30 +15,30 @@ BOT_TOKEN = os.getenv("BOT_TOKEN")
 TIMEZONE = os.getenv("TIMEZONE", "UTC")
 USER_TIME = {}
 
-# Команда /start
+# /start command
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
-        "Привет! Я пришлю сводку по рынку. Установи время командой /settime, например: /settime 10:00"
+        "Hi! I’ll send you a daily market summary. Set your time with /settime, e.g., /settime 10:00"
     )
 
-# Команда /settime
+# /settime command
 async def set_time(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if len(context.args) != 1:
-        return await update.message.reply_text("Укажи время в формате ЧЧ:ММ, например: /settime 09:30")
+        return await update.message.reply_text("Please use HH:MM format, e.g., /settime 09:30")
     try:
         t = datetime.strptime(context.args[0], "%H:%M").time()
         tz = pytz.timezone(TIMEZONE)
         USER_TIME[update.effective_user.id] = (t.hour, t.minute, tz)
-        await update.message.reply_text(f"🕒 Окей, буду присылать каждый день в {context.args[0]} {TIMEZONE}")
+        await update.message.reply_text(f"🕒 Got it! I’ll message you every day at {context.args[0]} {TIMEZONE}")
     except ValueError:
-        await update.message.reply_text("Неверный формат — используй ЧЧ:ММ")
+        await update.message.reply_text("Invalid time format. Use HH:MM")
 
-# Команда /now
+# /now command
 async def now(update: Update, context: ContextTypes.DEFAULT_TYPE):
     summary = get_market_summary()
     await update.message.reply_text(summary, parse_mode="Markdown")
 
-# Генерация текста рыночной сводки
+# Market summary
 def get_market_summary():
     tickers = {
         "^GSPC": "S&P 500",
@@ -56,9 +56,10 @@ def get_market_summary():
         price = today["Close"]
         lines.append(f"— *{name}*: {price:.2f} ({change:+.2f}%)")
     now_date = datetime.now().strftime("%Y-%m-%d")
-    return f"📈 *Рынки на {now_date}:*\n" + "\n".join(lines)
+    return f"📈 *Markets on {now_date}:*
+" + "\n".join(lines)
 
-# Планировщик
+# Scheduled task
 async def scheduled_job(app):
     for user_id, (h, m, tz) in USER_TIME.items():
         now_ = datetime.now(tz)
@@ -67,24 +68,20 @@ async def scheduled_job(app):
             try:
                 await app.bot.send_message(chat_id=user_id, text=text, parse_mode="Markdown")
             except Exception as e:
-                logger.warning(f"Ошибка при отправке: {e}")
+                logger.warning(f"Error sending message: {e}")
 
-# Главная функция
-async def main():
+# Entry point
+if __name__ == "__main__":
+    from telegram.ext import ApplicationBuilder
+
     app = ApplicationBuilder().token(BOT_TOKEN).build()
 
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("settime", set_time))
     app.add_handler(CommandHandler("now", now))
 
-    # Планировщик
     scheduler = AsyncIOScheduler(timezone=pytz.utc)
     scheduler.add_job(lambda: scheduled_job(app), trigger="interval", minutes=1)
     scheduler.start()
 
-    await app.run_polling()
-
-# Запуск
-if __name__ == "__main__":
-    import asyncio
-    asyncio.run(main())
+    app.run_polling()
