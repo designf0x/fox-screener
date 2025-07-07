@@ -42,8 +42,9 @@ def get_market_summary():
         "^IXIC": "NASDAQ",
         "BTC-USD": "BTC",
         "ETH-USD": "ETH",
-        "GC=F": "Gold",
+        "GC=F": "GOLD",  # золото
     }
+
     lines = []
     for symbol, name in tickers.items():
         data = yf.Ticker(symbol).history(period="1d")
@@ -52,9 +53,21 @@ def get_market_summary():
         today = data.iloc[-1]
         change = (today["Close"] - today["Open"]) / today["Open"] * 100
         price = today["Close"]
-        lines.append(f"— *{name}*: {price:.2f} ({change:+.2f}%)")
+
+        if change > 0:
+            emoji = "❇️"
+        elif change < 0:
+            emoji = "🔻"
+        else:
+            emoji = "0️⃣"
+
+        formatted_price = f"{price:,.2f}".replace(",", " ")  # неразрывный пробел между разрядами
+        formatted_change = f"{change:+.2f}%"
+        lines.append(f"{emoji} {name}: {formatted_price} ({formatted_change})")
+
     now_date = datetime.now().strftime("%Y-%m-%d")
-    return f"📈 *Markets on {now_date}:*\n" + "\n".join(lines)
+    return f"📈 *Markets on {now_date}:*\n\n" + "\n".join(lines)
+
 
 async def scheduled_job(app):
     for user_id, (h, m, tz) in USER_TIME.items():
