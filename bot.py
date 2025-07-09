@@ -27,7 +27,7 @@ async def set_time(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
         t = datetime.strptime(context.args[0], "%H:%M").time()
         tz = pytz.timezone(TIMEZONE)
-        USER_TIME[update.effective_user.id] = (t.hour, t.minute, tz)
+        USER_TIME[update.effective_chat.id] = (t.hour, t.minute, tz)
         await update.message.reply_text(f"🕒 Got it! I’ll message you daily at {context.args[0]} {TIMEZONE}")
     except ValueError:
         await update.message.reply_text("Invalid time format. Use HH:MM")
@@ -70,11 +70,11 @@ def get_market_summary():
 
 
 async def scheduled_job(app):
-    for user_id, (h, m, tz) in USER_TIME.items():
+    for chat_id, (h, m, tz) in USER_TIME.items():
         now_ = datetime.now(tz)
         if now_.hour == h and now_.minute == m:
             text = get_market_summary()
-            await app.bot.send_message(chat_id=user_id, text=text, parse_mode="Markdown")
+            await app.bot.send_message(chat_id=chat_id, text=text, parse_mode="Markdown")
 
 async def main():
     app = ApplicationBuilder().token(BOT_TOKEN).build()
@@ -84,7 +84,7 @@ async def main():
     app.add_handler(CommandHandler("now", now))
 
     scheduler = AsyncIOScheduler(timezone=pytz.utc)
-    
+
     # Используем async-обертку, чтобы гарантировать выполнение в loop
     async def job_wrapper():
         await scheduled_job(app)
