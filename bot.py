@@ -1,7 +1,7 @@
 import os
 import logging
 from telegram import Update
-from telegram.ext import ApplicationBuilder, CommandHandler, ContextTypes
+from telegram.ext import ApplicationBuilder, CommandHandler, ContextTypes, CallbackQueryHandler
 import yfinance as yf
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from datetime import datetime
@@ -14,21 +14,33 @@ logger = logging.getLogger(__name__)
 
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 TIMEZONE = os.getenv("TIMEZONE", "UTC")
-USER_TIME = {}
+USER_TIME = {}  # {chat_id: (hour, minute)}
+USER_TZ = {}    # {chat_id: timezone object}
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
-        "Hi! I’ll send you a daily market summary. Set your time with /settime, e.g., /settime 10:00"
+        "Hi! I’ll send you a daily market summary.\nSet your timezone with /settimezone, e.g., /settimezone Asia/Bangkok\nThen set time with /settime, e.g., /settime 10:00"
     )
+
+async def set_timezone(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if len(context.args) != 1:
+        return await update.message.reply_text("Please provide timezone like /settimezone Europe/Moscow")
+    try:
+        tz = pytz.timezone(context.args[0])
+        USER_TZ[update.effective_chat.id] = tz
+        await update.message.reply_text(f"\U0001F30D Timezone set to {context.args[0]}")
+    except pytz.UnknownTimeZoneError:
+        await update.message.reply_text("Invalid timezone. Use names like Europe/Moscow or Asia/Bangkok")
 
 async def set_time(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if len(context.args) != 1:
         return await update.message.reply_text("Please use HH:MM format, e.g., /settime 09:30")
+    if update.effective_chat.id not in USER_TZ:
+        return await update.message.reply_text("Set your timezone first with /settimezone")
     try:
         t = datetime.strptime(context.args[0], "%H:%M").time()
-        tz = pytz.timezone(TIMEZONE)
-        USER_TIME[update.effective_user.id] = (t.hour, t.minute, tz)
-        await update.message.reply_text(f"🕒 Got it! I’ll message you daily at {context.args[0]} {TIMEZONE}")
+        USER_TIME[update.effective_chat.id] = (t.hour, t.minute)
+        await update.message.reply_text(f"\U0001F552 Got it! I’ll message you daily at {context.args[0]} in your timezone")
     except ValueError:
         await update.message.reply_text("Invalid time format. Use HH:MM")
 
@@ -61,7 +73,7 @@ def get_market_summary():
         else:
             emoji = "0️⃣"
 
-        formatted_price = f"{price:,.2f}".replace(",", " ")  # неразрывный пробел между разрядами
+        formatted_price = f"{price:,.2f}".replace(",", " ")
         formatted_change = f"{change:+.2f}%"
         lines.append(f"{emoji} {name}: {formatted_price} ({formatted_change})")
 
@@ -70,29 +82,30 @@ def get_market_summary():
 
 
 async def scheduled_job(app):
-    for user_id, (h, m, tz) in USER_TIME.items():
+    for chat_id, (h, m) in USER_TIME.items():
+        tz = USER_TZ.get(chat_id, pytz.utc)
         now_ = datetime.now(tz)
         if now_.hour == h and now_.minute == m:
             text = get_market_summary()
-            await app.bot.send_message(chat_id=user_id, text=text, parse_mode="Markdown")
+            await app.bot.send_message(chat_id=chat_id, text=text, parse_mode="Markdown")
 
 async def main():
     app = ApplicationBuilder().token(BOT_TOKEN).build()
 
     app.add_handler(CommandHandler("start", start))
+    app.add_handler(CommandHandler("settimezone", set_timezone))
     app.add_handler(CommandHandler("settime", set_time))
     app.add_handler(CommandHandler("now", now))
 
     scheduler = AsyncIOScheduler(timezone=pytz.utc)
 
-    # Используем async-обертку, чтобы гарантировать выполнение в loop
     async def job_wrapper():
         await scheduled_job(app)
 
     scheduler.add_job(job_wrapper, "interval", minutes=1)
     scheduler.start()
 
-    await app.run_polling()
+    await app.run_polling(allowed_updates=Update.ALL_TYPES)
 
 if __name__ == "__main__":
     nest_asyncio.apply()
