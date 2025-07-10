@@ -99,8 +99,8 @@ def get_market_summary():
             emoji = "0️⃣"
 
         formatted_price = f"{price:,.2f}".replace(",", " ")
-        formatted_change = f"{change:+.2f}%"
-        lines.append(f"{emoji} {name}: {formatted_price} ({formatted_change})")
+        formatted_change = f"_{change:+.2f}%_"
+        lines.append(f"{emoji} *{name}*: {formatted_price} ({formatted_change})")
 
     now_date = datetime.now().strftime("%d %B %Y")
     return f"📈 *Markets on {now_date}:*\n\n" + "\n".join(lines)
