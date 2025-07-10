@@ -28,7 +28,7 @@ async def set_timezone(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
         tz = pytz.timezone(context.args[0])
         USER_TZ[update.effective_chat.id] = tz
-        await update.message.reply_text(f"🌍 Timezone set to {context.args[0]}")
+        await update.message.reply_text(f"\U0001F30D Timezone set to {context.args[0]}")
     except pytz.UnknownTimeZoneError:
         await update.message.reply_text("Invalid timezone. Use names like Europe/Moscow or Asia/Bangkok")
 
@@ -40,7 +40,7 @@ async def set_time(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
         t = datetime.strptime(context.args[0], "%H:%M").time()
         USER_TIME[update.effective_chat.id] = (t.hour, t.minute)
-        await update.message.reply_text(f"🕒 Got it! I’ll message you daily at {context.args[0]} in your timezone")
+        await update.message.reply_text(f"\U0001F552 Got it! I’ll message you daily at {context.args[0]} in your timezone")
     except ValueError:
         await update.message.reply_text("Invalid time format. Use HH:MM")
 
@@ -77,7 +77,7 @@ def get_market_summary():
         formatted_change = f"{change:+.2f}%"
         lines.append(f"{emoji} {name}: {formatted_price} ({formatted_change})")
 
-    now_date = datetime.now().strftime("%Y-%m-%d")
+    now_date = datetime.now().strftime("%d %B %Y")
     return f"📈 *Markets on {now_date}:*\n\n" + "\n".join(lines)
 
 
