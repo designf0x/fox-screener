@@ -83,28 +83,37 @@ def get_market_summary():
         "CL=F": "OIL",   # crude oil
     }
 
+    groups = [
+        ["^GSPC", "^IXIC"],
+        ["BTC-USD", "ETH-USD"],
+        ["GC=F", "CL=F"]
+    ]
+
     lines = []
-    for symbol, name in tickers.items():
-        data = yf.Ticker(symbol).history(period="1d")
-        if data.empty:
-            continue
-        today = data.iloc[-1]
-        change = (today["Close"] - today["Open"]) / today["Open"] * 100
-        price = today["Close"]
+    for group in groups:
+        for symbol in group:
+            name = tickers[symbol]
+            data = yf.Ticker(symbol).history(period="1d")
+            if data.empty:
+                continue
+            today = data.iloc[-1]
+            change = (today["Close"] - today["Open"]) / today["Open"] * 100
+            price = today["Close"]
 
-        if change > 0:
-            emoji = "❇️"
-        elif change < 0:
-            emoji = "🔻"
-        else:
-            emoji = "0️⃣"
+            if change > 0:
+                emoji = "❇️"
+            elif change < 0:
+                emoji = "🔻"
+            else:
+                emoji = "0️⃣"
 
-        formatted_price = f"{price:,.2f}".replace(",", " ")
-        formatted_change = f"_{change:+.2f}%_"
-        lines.append(f"{emoji} *{name}*: {formatted_price} ({formatted_change})")
+            formatted_price = f"{price:,.2f}".replace(",", " ")
+            formatted_change = f"_{change:+.2f}%_"
+            lines.append(f"{emoji} *{name}*: {formatted_price} ({formatted_change})")
+        lines.append("")
 
     now_date = datetime.now().strftime("%d %B %Y")
-    return f"📈 *Markets on {now_date}:*\n\n" + "\n".join(lines)
+    return f"📈 *Markets on {now_date}:*\n\n" + "\n".join(lines).strip()
 
 
 async def scheduled_job(app):
