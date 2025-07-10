@@ -19,7 +19,8 @@ USER_TZ = {}    # {chat_id: timezone object}
 
 # Predefined timezones for keyboard
 PREDEFINED_TIMEZONES = [
-    ["Europe/Moscow", "Asia/Bangkok"],
+    ["Europe/Moscow", "Europe/Kyiv"],
+    ["Asia/Bangkok", "Asia/Singapore"],
     ["Asia/Tokyo", "America/New_York"],
     ["Europe/London", "UTC"]
 ]
