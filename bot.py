@@ -79,7 +79,8 @@ def get_market_summary():
         "^IXIC": "NASDAQ",
         "BTC-USD": "BTC",
         "ETH-USD": "ETH",
-        "GC=F": "GOLD",  # золото
+        "GC=F": "GOLD",  # gold
+        "CL=F": "OIL",   # crude oil
     }
 
     lines = []
