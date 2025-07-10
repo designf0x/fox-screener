@@ -19,9 +19,10 @@ USER_TZ = {}    # {chat_id: timezone object}
 
 # Predefined timezones for keyboard
 PREDEFINED_TIMEZONES = [
-    ["Europe/Moscow", "Asia/Bangkok"],
-    ["Asia/Tokyo", "America/New_York"],
-    ["Europe/London", "UTC"]
+    ["UTC", "Europe/Kyiv"],
+    ["Europe/Moscow", "Europe/London"],
+    ["Asia/Bangkok", "Asia/Singapore"],
+    ["Asia/Tokyo", "America/New_York"]
 ]
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
