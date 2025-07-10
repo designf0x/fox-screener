@@ -1,6 +1,6 @@
 import os
 import logging
-from telegram import Update
+from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import ApplicationBuilder, CommandHandler, ContextTypes, CallbackQueryHandler
 import yfinance as yf
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
@@ -17,10 +17,34 @@ TIMEZONE = os.getenv("TIMEZONE", "UTC")
 USER_TIME = {}  # {chat_id: (hour, minute)}
 USER_TZ = {}    # {chat_id: timezone object}
 
+# Predefined timezones for keyboard
+PREDEFINED_TIMEZONES = [
+    ["Europe/Moscow", "Asia/Bangkok"],
+    ["Asia/Tokyo", "America/New_York"],
+    ["Europe/London", "UTC"]
+]
+
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    keyboard = [[InlineKeyboardButton(tz, callback_data=f"tz_{tz}") for tz in row] for row in PREDEFINED_TIMEZONES]
+    reply_markup = InlineKeyboardMarkup(keyboard)
     await update.message.reply_text(
-        "Hi! I’ll send you a daily market summary.\nSet your timezone with /settimezone, e.g., /settimezone Asia/Bangkok\nThen set time with /settime, e.g., /settime 10:00"
+        "Hi! I’ll send you a daily market summary.\nChoose your timezone:",
+        reply_markup=reply_markup
     )
+
+async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    data = query.data
+
+    if data.startswith("tz_"):
+        tz_name = data[3:]
+        try:
+            tz = pytz.timezone(tz_name)
+            USER_TZ[query.message.chat_id] = tz
+            await query.edit_message_text(f"\U0001F30D Timezone set to {tz_name}\nNow use /settime HH:MM to set delivery time.")
+        except pytz.UnknownTimeZoneError:
+            await query.edit_message_text("Invalid timezone.")
 
 async def set_timezone(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if len(context.args) != 1:
@@ -96,6 +120,7 @@ async def main():
     app.add_handler(CommandHandler("settimezone", set_timezone))
     app.add_handler(CommandHandler("settime", set_time))
     app.add_handler(CommandHandler("now", now))
+    app.add_handler(CallbackQueryHandler(button_handler))
 
     scheduler = AsyncIOScheduler(timezone=pytz.utc)
 
