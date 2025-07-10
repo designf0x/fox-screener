@@ -1,7 +1,7 @@
 import os
 import logging
 from telegram import Update
-from telegram.ext import ApplicationBuilder, CommandHandler, ContextTypes
+from telegram.ext import ApplicationBuilder, CommandHandler, ContextTypes, CallbackQueryHandler
 import yfinance as yf
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from datetime import datetime
@@ -105,7 +105,7 @@ async def main():
     scheduler.add_job(job_wrapper, "interval", minutes=1)
     scheduler.start()
 
-    await app.run_polling()
+    await app.run_polling(allowed_updates=Update.ALL_TYPES)
 
 if __name__ == "__main__":
     nest_asyncio.apply()
