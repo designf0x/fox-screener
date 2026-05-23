@@ -244,15 +244,11 @@ async def now(update: Update, context: ContextTypes.DEFAULT_TYPE):
     summary = await get_market_summary(tz)
     await update.message.reply_text(summary, parse_mode="Markdown")
 
-# === Main Entry ===
-async def main():
-    if not BOT_TOKEN:
-        logger.error("Environment variable 'BOT_TOKEN' is missing! Please configure it in your environment.")
-        return
-
-    # Initialize Telegram Application (with robust connect/read timeouts for cloud boots)
-    app = ApplicationBuilder().token(BOT_TOKEN).connect_timeout(30.0).read_timeout(30.0).build()
-
+# === Application Lifecycle Callbacks ===
+async def post_init(app):
+    """Lifecycle callback executed by python-telegram-bot on startup."""
+    logger.info("Executing post-initialization database and scheduler setup...")
+    
     # Initialize Async Scheduler
     scheduler = AsyncIOScheduler(timezone=pytz.utc)
     app.bot_data["scheduler"] = scheduler
@@ -278,6 +274,35 @@ async def main():
     except Exception as e:
         logger.error(f"Failed to load configurations from database: {e}")
 
+    # Start Scheduler
+    scheduler.start()
+    logger.info("Scheduler successfully started.")
+
+async def post_shutdown(app):
+    """Lifecycle callback executed by python-telegram-bot on shutdown."""
+    logger.info("Executing post-shutdown cleanup...")
+    scheduler = app.bot_data.get("scheduler")
+    if scheduler:
+        scheduler.shutdown()
+        logger.info("Scheduler successfully stopped.")
+
+# === Main Entry ===
+def main():
+    if not BOT_TOKEN:
+        logger.error("Environment variable 'BOT_TOKEN' is missing! Please configure it in your environment.")
+        return
+
+    # Initialize Telegram Application with robust timeouts and official lifecycle hooks
+    app = (
+        ApplicationBuilder()
+        .token(BOT_TOKEN)
+        .connect_timeout(30.0)
+        .read_timeout(30.0)
+        .post_init(post_init)
+        .post_shutdown(post_shutdown)
+        .build()
+    )
+
     # Register Handlers
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("settimezone", set_timezone))
@@ -285,13 +310,9 @@ async def main():
     app.add_handler(CommandHandler("now", now))
     app.add_handler(CallbackQueryHandler(button_handler))
 
-    # Start Scheduler
-    scheduler.start()
-    logger.info("Scheduler started.")
-
-    # Start Polling
-    logger.info("Starting bot polling...")
-    await app.run_polling(allowed_updates=Update.ALL_TYPES)
+    # Run polling synchronously (it internally sets up and manages its own event loop lifecycle)
+    logger.info("Starting bot polling synchronously...")
+    app.run_polling(allowed_updates=Update.ALL_TYPES)
 
 if __name__ == "__main__":
-    asyncio.run(main())
+    main()
