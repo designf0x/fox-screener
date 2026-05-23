@@ -291,11 +291,36 @@ async def post_shutdown(app):
         scheduler.shutdown()
         logger.info("Scheduler successfully stopped.")
 
+import threading
+from http.server import HTTPServer, BaseHTTPRequestHandler
+
+class SimpleHTTPRequestHandler(BaseHTTPRequestHandler):
+    def log_message(self, format, *args):
+        # Suppress GET logging to keep console logs clean
+        return
+
+    def do_GET(self):
+        self.send_response(200)
+        self.send_header('Content-type', 'application/json')
+        self.end_headers()
+        self.wfile.write(b'{"status": "ok"}')
+
+def run_http_server():
+    # Render binds dynamic port to environment variable PORT
+    port = int(os.getenv("PORT", 8080))
+    server = HTTPServer(('0.0.0.0', port), SimpleHTTPRequestHandler)
+    logger.info(f"Starting lightweight web server on port {port} to bypass Render spin-down...")
+    server.serve_forever()
+
 # === Main Entry ===
 def main():
     if not BOT_TOKEN:
         logger.error("Environment variable 'BOT_TOKEN' is missing! Please configure it in your environment.")
         return
+
+    # Start web server thread to keep Render awake on port pings
+    web_thread = threading.Thread(target=run_http_server, daemon=True)
+    web_thread.start()
 
     # Initialize Telegram Application with robust timeouts and official lifecycle hooks
     app = (
