@@ -295,6 +295,12 @@ export function extractAssetTicker(text: string): string | null {
   if (lower.includes("nasdaq") || lower.includes("насдак")) {
     return "^IXIC";
   }
+  if (lower.includes("chainlink") || lower.includes("чейнлинк")) {
+    return "LINK-USD";
+  }
+  if (lower.includes("solana") || lower.includes("солана")) {
+    return "SOL-USD";
+  }
 
   // Regex to find 1 to 5 uppercase letters (standard tickers like TSLA, AAPL, MSFT)
   const words = text.split(/\s+/);
@@ -304,6 +310,11 @@ export function extractAssetTicker(text: string): string | null {
       const upper = cleanWord.toUpperCase();
       const commonWords = ["I", "ME", "MY", "WE", "US", "YOU", "HE", "SHE", "IT", "THEY", "THE", "AND", "BUT", "OR", "AS", "IF", "BY", "AT", "IN", "OF", "ON", "TO", "FOR"];
       if (!commonWords.includes(upper)) {
+        // If it's a known crypto ticker, append -USD to query Yahoo's cryptocurrency quotes
+        const knownCryptos = ["BTC", "ETH", "SOL", "LINK", "ADA", "DOGE", "XRP", "LTC", "DOT", "UNI", "BCH", "AVAX", "NEAR", "MATIC", "TON"];
+        if (knownCryptos.includes(upper)) {
+          return `${upper}-USD`;
+        }
         return upper;
       }
     }
@@ -410,7 +421,14 @@ export async function routeWebhookUpdate(update: any, env: Env) {
       // 4. Fetch Tavily web search results (if key is set)
       if (env.TAVILY_API_KEY) {
         try {
-          const searchContext = await fetchSearchContext(text, env.TAVILY_API_KEY);
+          // Construct a focused financial search query to avoid generic search noise
+          let searchQuery = text;
+          if (ticker) {
+            searchQuery = `${ticker} price news today ${text}`;
+          } else {
+            searchQuery = `${text} market price news`;
+          }
+          const searchContext = await fetchSearchContext(searchQuery, env.TAVILY_API_KEY);
           if (searchContext) {
             context += `${searchContext}\n\n`;
           }

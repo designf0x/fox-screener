@@ -35,7 +35,9 @@ function testTickerExtraction() {
     { text: "Цена AAPL на сегодня", expected: "AAPL" },
     { text: "Как дела у TSLA?", expected: "TSLA" },
     { text: "Привет, как дела?", expected: null },
-    { text: "S&P 500 и NASDAQ", expected: "^GSPC" } // S&P matches first
+    { text: "S&P 500 и NASDAQ", expected: "^GSPC" }, // S&P matches first
+    { text: "Что думаешь о LINK?", expected: "LINK-USD" },
+    { text: "Как поживает солана?", expected: "SOL-USD" }
   ];
 
   let passed = 0;
