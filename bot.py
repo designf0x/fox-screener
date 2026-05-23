@@ -138,6 +138,7 @@ async def get_market_summary(tz=pytz.utc) -> str:
 # === Bot Commands ===
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Greets the user and presents timezone selection buttons."""
+    logger.info(f"📥 Received /start command from chat_id {update.effective_chat.id}")
     keyboard = [[InlineKeyboardButton(tz, callback_data=f"tz_{tz}") for tz in row] for row in PREDEFINED_TIMEZONES]
     reply_markup = InlineKeyboardMarkup(keyboard)
     await update.message.reply_text(
@@ -150,6 +151,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Processes interactive timezone selection clicks."""
     query = update.callback_query
+    logger.info(f"📥 Received callback query from chat_id {query.message.chat_id}: {query.data}")
     await query.answer()
     data = query.data
     chat_id = query.message.chat_id
@@ -181,6 +183,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def set_timezone(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Allows manual timezone settings via CLI arguments."""
     chat_id = update.effective_chat.id
+    logger.info(f"📥 Received /settimezone command from chat_id {chat_id} with args {context.args}")
     if len(context.args) != 1:
         return await update.message.reply_text("Please provide your timezone, e.g., `/settimezone Europe/Moscow`")
     
@@ -209,6 +212,7 @@ async def set_timezone(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def set_time(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Configures daily briefing time and persists state to SQLite."""
     chat_id = update.effective_chat.id
+    logger.info(f"📥 Received /settime command from chat_id {chat_id} with args {context.args}")
     if len(context.args) != 1:
         return await update.message.reply_text("Please use HH:MM format, e.g., `/settime 09:30`")
     if chat_id not in USER_TZ:
@@ -236,6 +240,7 @@ async def set_time(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def now(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Instantly delivers the concurrent market summary without blocking."""
     chat_id = update.effective_chat.id
+    logger.info(f"📥 Received /now command from chat_id {chat_id}")
     tz = USER_TZ.get(chat_id, pytz.utc)
     
     # Notify user that bot is loading to keep UX excellent
