@@ -1,0 +1,8 @@
+CREATE TABLE IF NOT EXISTS user_settings (
+    chat_id INTEGER PRIMARY KEY,
+    timezone TEXT NOT NULL,
+    hour INTEGER,
+    minute INTEGER,
+    watchlist TEXT DEFAULT '^GSPC,^IXIC,BTC-USD,ETH-USD,GC=F,CL=F',
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);

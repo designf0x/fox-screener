@@ -1,0 +1,16 @@
+{
+  "name": "fox-screener",
+  "version": "1.0.0",
+  "description": "Fox Market Screener Telegram Bot running on Cloudflare Workers",
+  "main": "src/index.ts",
+  "scripts": {
+    "dev": "wrangler dev",
+    "deploy": "wrangler deploy",
+    "cf-typegen": "wrangler types"
+  },
+  "devDependencies": {
+    "@cloudflare/workers-types": "^4.20240502.0",
+    "typescript": "^5.4.5",
+    "wrangler": "^3.55.0"
+  }
+}
