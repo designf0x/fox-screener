@@ -236,6 +236,43 @@ export async function checkRateLimit(chatId: number, env: Env): Promise<boolean>
   }
 }
 
+export async function checkDailyTokenLimit(chatId: number, env: Env): Promise<boolean> {
+  const limit = Number(env.DAILY_TOKEN_LIMIT || "25000");
+  const todayStart = Math.floor(Date.now() / 86400000) * 86400;
+
+  try {
+    const record = await env.DB.prepare("SELECT tokens_used FROM chat_daily_usage WHERE chat_id = ? AND day_start = ?")
+      .bind(chatId, todayStart)
+      .first<any>();
+
+    if (record && record.tokens_used >= limit) {
+      return false; // Limit exceeded
+    }
+    return true;
+  } catch (err) {
+    console.error("D1 Daily token limit database error:", err);
+    return true; // Fail-safe: allow requests if database is down
+  }
+}
+
+export async function updateDailyTokenUsage(chatId: number, tokensUsed: number, env: Env): Promise<void> {
+  if (tokensUsed <= 0) return;
+  const todayStart = Math.floor(Date.now() / 86400000) * 86400;
+
+  try {
+    await env.DB.prepare(`
+      INSERT INTO chat_daily_usage (chat_id, day_start, tokens_used)
+      VALUES (?, ?, ?)
+      ON CONFLICT(chat_id, day_start)
+      DO UPDATE SET tokens_used = tokens_used + excluded.tokens_used
+    `)
+      .bind(chatId, todayStart, tokensUsed)
+      .run();
+  } catch (err) {
+    console.error("Failed to update daily token usage:", err);
+  }
+}
+
 export function extractAssetTicker(text: string): string | null {
   const lower = text.toLowerCase();
   
@@ -318,10 +355,17 @@ export async function routeWebhookUpdate(update: any, env: Env) {
     if (isPrivate || isBotMentioned) {
       console.log(`Processing free-form query in chat ${chatId} (${chatType})...`);
 
-      // 1. Rate limiting check
+      // 1. Rate limiting check (minute rate limit)
       const withinLimit = await checkRateLimit(chatId, env);
       if (!withinLimit) {
         await sendTelegramMessage(chatId, "⚠️ Вы превысили лимит запросов. Пожалуйста, подождите минуту перед следующим запросом.", env);
+        return;
+      }
+
+      // 1.5. Daily token usage limit check
+      const withinDailyLimit = await checkDailyTokenLimit(chatId, env);
+      if (!withinDailyLimit) {
+        await sendTelegramMessage(chatId, "⚠️ Превышен суточный лимит использования ИИ для этого чата (25 000 токенов). Лимит обновится завтра в 00:00 UTC.", env);
         return;
       }
 
@@ -378,10 +422,13 @@ export async function routeWebhookUpdate(update: any, env: Env) {
       }
 
       // 5. Query DeepSeek with context
-      const answer = await queryDeepSeek(text, context, env);
+      const result = await queryDeepSeek(text, context, env);
+
+      // 5.5. Track and persist the token usage in SQLite D1
+      await updateDailyTokenUsage(chatId, result.totalTokens, env);
 
       // 6. Deliver the Russian response
-      await sendTelegramMessage(chatId, answer, env);
+      await sendTelegramMessage(chatId, result.answer, env);
     }
   }
 }

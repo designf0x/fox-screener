@@ -1,13 +1,21 @@
 import { Env } from "./types";
 
-export async function queryDeepSeek(userMessage: string, context: string, env: Env): Promise<string> {
+export interface DeepSeekResult {
+  answer: string;
+  totalTokens: number;
+}
+
+export async function queryDeepSeek(userMessage: string, context: string, env: Env): Promise<DeepSeekResult> {
   const apiKey = env.DEEPSEEK_API_KEY;
   if (!apiKey) {
-    return "⚠️ Ошибка: Ключ API DeepSeek не настроен. Пожалуйста, свяжитесь с администратором.";
+    return {
+      answer: "⚠️ Ошибка: Ключ API DeepSeek не настроен. Пожалуйста, свяжитесь с администратором.",
+      totalTokens: 0
+    };
   }
 
   const modelName = env.DEEPSEEK_MODEL || "deepseek-chat";
-  const maxTokens = Number(env.DEEPSEEK_MAX_TOKENS || "250");
+  const maxTokens = Number(env.DEEPSEEK_MAX_TOKENS || "1000");
 
   const url = "https://api.deepseek.com/chat/completions";
 
@@ -47,18 +55,32 @@ Constraints:
     if (!response.ok) {
       const errText = await response.text();
       console.error(`DeepSeek API error (${response.status}): ${errText}`);
-      return "⚠️ Ошибка: Не удалось получить ответ от DeepSeek API. Пожалуйста, попробуйте позже.";
+      return {
+        answer: "⚠️ Ошибка: Не удалось получить ответ от DeepSeek API. Пожалуйста, попробуйте позже.",
+        totalTokens: 0
+      };
     }
 
     const data: any = await response.json();
     const content = data.choices?.[0]?.message?.content;
+    const totalTokens = data.usage?.total_tokens || 0;
+    
     if (!content) {
-      return "⚠️ Ошибка: Пустой ответ от DeepSeek API.";
+      return {
+        answer: "⚠️ Ошибка: Пустой ответ от DeepSeek API.",
+        totalTokens: 0
+      };
     }
 
-    return content.trim();
+    return {
+      answer: content.trim(),
+      totalTokens
+    };
   } catch (error: any) {
     console.error("Failed to query DeepSeek:", error);
-    return `⚠️ Ошибка: Не удалось соединиться с AI сервером. (${error.message || "Connection Error"})`;
+    return {
+      answer: `⚠️ Ошибка: Не удалось соединиться с AI сервером. (${error.message || "Connection Error"})`,
+      totalTokens: 0
+    };
   }
 }

@@ -13,3 +13,10 @@ CREATE TABLE IF NOT EXISTS chat_rate_limits (
     count INTEGER,
     PRIMARY KEY (chat_id, window_start)
 );
+
+CREATE TABLE IF NOT EXISTS chat_daily_usage (
+    chat_id INTEGER,
+    day_start INTEGER,
+    tokens_used INTEGER,
+    PRIMARY KEY (chat_id, day_start)
+);

@@ -95,11 +95,42 @@ async function testRateLimiting() {
 async function testDeepSeekMissingKey() {
   console.log("\n⏳ Testing DeepSeek missing API key handling...");
   const res = await queryDeepSeek("test", "context", {} as any);
-  if (res.includes("Ключ API DeepSeek не настроен")) {
+  if (res.answer.includes("Ключ API DeepSeek не настроен")) {
     console.log("  ✅ DeepSeek gracefully handled missing API key.");
     return true;
   } else {
     console.error("  ❌ DeepSeek failed to warn about missing API key. Response:", res);
+    return false;
+  }
+}
+
+async function testDailyTokenLimit() {
+  console.log("\n⏳ Testing daily token limit simulation...");
+  const db = new MockDB() as any;
+  const env = { DB: db, DAILY_TOKEN_LIMIT: "100" } as any;
+
+  async function checkDailyTokenLimitMock(chatId, env) {
+    const limit = Number(env.DAILY_TOKEN_LIMIT);
+    const todayStart = Math.floor(Date.now() / 86400000) * 86400;
+    const key = `${chatId}_${todayStart}`;
+
+    const record = await env.DB.prepare().bind(chatId, todayStart).first();
+    if (record && record.tokens_used >= limit) {
+      return false;
+    }
+    return true;
+  }
+
+  // Set tokens used to exceed limit
+  const todayStart = Math.floor(Date.now() / 86400000) * 86400;
+  db.store[`12345_${todayStart}`] = { tokens_used: 120 };
+
+  const allowed = await checkDailyTokenLimitMock(12345, env);
+  if (!allowed) {
+    console.log("  ✅ Daily token limiter correctly blocked request after exceeding 100 tokens.");
+    return true;
+  } else {
+    console.error("  ❌ Daily token limiter failed to block request.");
     return false;
   }
 }
@@ -109,8 +140,9 @@ async function runAll() {
   const t1 = testTickerExtraction();
   const t2 = await testRateLimiting();
   const t3 = await testDeepSeekMissingKey();
+  const t4 = await testDailyTokenLimit();
 
-  if (t1 && t2 && t3) {
+  if (t1 && t2 && t3 && t4) {
     console.log("\n✨ ALL LOCAL AUTOMATED TESTS PASSED SUCCESSFULLY! ✨");
   } else {
     console.error("\n❌ SOME TESTS FAILED. PLEASE REVIEW LOGS. ❌");

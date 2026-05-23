@@ -8,6 +8,7 @@ export interface Env {
   BOT_USERNAME?: string;
   RATE_LIMIT_MAX_REQUESTS?: string;
   RATE_LIMIT_WINDOW_SECONDS?: string;
+  DAILY_TOKEN_LIMIT?: string;
 }
 
 export interface UserSettings {
