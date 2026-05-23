@@ -250,8 +250,8 @@ async def main():
         logger.error("Environment variable 'BOT_TOKEN' is missing! Please configure it in your environment.")
         return
 
-    # Initialize Telegram Application
-    app = ApplicationBuilder().token(BOT_TOKEN).build()
+    # Initialize Telegram Application (with robust connect/read timeouts for cloud boots)
+    app = ApplicationBuilder().token(BOT_TOKEN).connect_timeout(30.0).read_timeout(30.0).build()
 
     # Initialize Async Scheduler
     scheduler = AsyncIOScheduler(timezone=pytz.utc)
@@ -294,6 +294,4 @@ async def main():
     await app.run_polling(allowed_updates=Update.ALL_TYPES)
 
 if __name__ == "__main__":
-    import nest_asyncio
-    nest_asyncio.apply()
     asyncio.run(main())
