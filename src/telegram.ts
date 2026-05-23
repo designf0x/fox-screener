@@ -347,12 +347,16 @@ export async function routeWebhookUpdate(update: any, env: Env) {
     const chatType = message.chat?.type;
     const isPrivate = chatType === "private";
     
-    // In group/supergroup chats, respond only when the bot's name is mentioned
+    // In group/supergroup chats, respond only when the bot's name is mentioned or when replying to the bot
     const botUsername = env.BOT_USERNAME || "FoxScreenerBot";
     const isBotMentioned = text.toLowerCase().includes("@" + botUsername.toLowerCase()) || 
                            text.toLowerCase().includes(botUsername.toLowerCase());
+    
+    const replyToMessage = message.reply_to_message;
+    const isReplyToBot = replyToMessage && 
+                         replyToMessage.from?.username?.toLowerCase() === botUsername.toLowerCase();
 
-    if (isPrivate || isBotMentioned) {
+    if (isPrivate || isBotMentioned || isReplyToBot) {
       console.log(`Processing free-form query in chat ${chatId} (${chatType})...`);
 
       // 1. Rate limiting check (minute rate limit)
@@ -382,7 +386,13 @@ export async function routeWebhookUpdate(update: any, env: Env) {
 
       // 3. Extract asset ticker & fetch market data
       let context = "";
-      const ticker = extractAssetTicker(text);
+      
+      // Inject the context of the message that the user is replying to for rich conversation history
+      if (isReplyToBot && replyToMessage.text) {
+        context += `Previous Bot Message (user is replying directly to this message):\n"${replyToMessage.text}"\n\n`;
+      }
+      
+      const ticker = extractAssetTicker(text) || (isReplyToBot && replyToMessage.text ? extractAssetTicker(replyToMessage.text) : null);
       if (ticker) {
         try {
           const res = await fetchSymbolChart(ticker);
