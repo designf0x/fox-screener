@@ -1,5 +1,7 @@
 import { Env } from "./types";
-import { getMarketSummary } from "./yahoo";
+import { getMarketSummary, fetchSymbolChart } from "./yahoo";
+import { fetchSearchContext } from "./search";
+import { queryDeepSeek } from "./deepseek";
 
 const PREDEFINED_TIMEZONES = [
   ["UTC", "Europe/Kyiv"],
@@ -198,6 +200,81 @@ export async function handleCallbackQuery(callbackQuery: any, env: Env) {
   }
 }
 
+export async function checkRateLimit(chatId: number, env: Env): Promise<boolean> {
+  const limit = Number(env.RATE_LIMIT_MAX_REQUESTS || "5");
+  const windowSecs = Number(env.RATE_LIMIT_WINDOW_SECONDS || "60");
+  
+  const now = Math.floor(Date.now() / 1000);
+  const windowStart = now - (now % windowSecs);
+
+  try {
+    // Clean up old rate limits to save space
+    await env.DB.prepare("DELETE FROM chat_rate_limits WHERE window_start < ?")
+      .bind(now - windowSecs)
+      .run();
+
+    const record = await env.DB.prepare("SELECT count FROM chat_rate_limits WHERE chat_id = ? AND window_start = ?")
+      .bind(chatId, windowStart)
+      .first<any>();
+
+    if (record) {
+      if (record.count >= limit) {
+        return false;
+      }
+      await env.DB.prepare("UPDATE chat_rate_limits SET count = count + 1 WHERE chat_id = ? AND window_start = ?")
+        .bind(chatId, windowStart)
+        .run();
+    } else {
+      await env.DB.prepare("INSERT INTO chat_rate_limits (chat_id, window_start, count) VALUES (?, ?, 1)")
+        .bind(chatId, windowStart)
+        .run();
+    }
+    return true;
+  } catch (err) {
+    console.error("D1 Rate limit database error:", err);
+    return true; // Fail-safe: allow requests if database is down
+  }
+}
+
+export function extractAssetTicker(text: string): string | null {
+  const lower = text.toLowerCase();
+  
+  // Known keyword mappings
+  if (lower.includes("bitcoin") || lower.includes("биткоин") || lower.includes("btc")) {
+    return "BTC-USD";
+  }
+  if (lower.includes("ethereum") || lower.includes("эфириум") || lower.includes("eth")) {
+    return "ETH-USD";
+  }
+  if (lower.includes("gold") || lower.includes("золото") || lower.includes("gc")) {
+    return "GC=F";
+  }
+  if (lower.includes("oil") || lower.includes("нефть") || lower.includes("cl")) {
+    return "CL=F";
+  }
+  if (lower.includes("s&p") || lower.includes("sp500") || lower.includes("снп")) {
+    return "^GSPC";
+  }
+  if (lower.includes("nasdaq") || lower.includes("насдак")) {
+    return "^IXIC";
+  }
+
+  // Regex to find 1 to 5 uppercase letters (standard tickers like TSLA, AAPL, MSFT)
+  const words = text.split(/\s+/);
+  for (const word of words) {
+    const cleanWord = word.replace(/[^a-zA-Z]/g, "");
+    if (cleanWord.length >= 1 && cleanWord.length <= 5) {
+      const upper = cleanWord.toUpperCase();
+      const commonWords = ["I", "ME", "MY", "WE", "US", "YOU", "HE", "SHE", "IT", "THEY", "THE", "AND", "BUT", "OR", "AS", "IF", "BY", "AT", "IN", "OF", "ON", "TO", "FOR"];
+      if (!commonWords.includes(upper)) {
+        return upper;
+      }
+    }
+  }
+
+  return null;
+}
+
 export async function routeWebhookUpdate(update: any, env: Env) {
   if (update.callback_query) {
     await handleCallbackQuery(update.callback_query, env);
@@ -228,5 +305,83 @@ export async function routeWebhookUpdate(update: any, env: Env) {
     }
   } else if (text.startsWith("/now")) {
     await handleNowCommand(chatId, env);
+  } else {
+    // Free-form user request or dynamic support
+    const chatType = message.chat?.type;
+    const isPrivate = chatType === "private";
+    
+    // In group/supergroup chats, respond only when the bot's name is mentioned
+    const botUsername = env.BOT_USERNAME || "FoxScreenerBot";
+    const isBotMentioned = text.toLowerCase().includes("@" + botUsername.toLowerCase()) || 
+                           text.toLowerCase().includes(botUsername.toLowerCase());
+
+    if (isPrivate || isBotMentioned) {
+      console.log(`Processing free-form query in chat ${chatId} (${chatType})...`);
+
+      // 1. Rate limiting check
+      const withinLimit = await checkRateLimit(chatId, env);
+      if (!withinLimit) {
+        await sendTelegramMessage(chatId, "⚠️ Вы превысили лимит запросов. Пожалуйста, подождите минуту перед следующим запросом.", env);
+        return;
+      }
+
+      // 2. Show typing indicator
+      try {
+        await fetch(`https://api.telegram.org/bot${env.BOT_TOKEN}/sendChatAction`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ chat_id: chatId, action: "typing" })
+        });
+      } catch (err) {
+        console.error("Failed to send typing indicator:", err);
+      }
+
+      // 3. Extract asset ticker & fetch market data
+      let context = "";
+      const ticker = extractAssetTicker(text);
+      if (ticker) {
+        try {
+          const res = await fetchSymbolChart(ticker);
+          if (!res.error && res.price !== undefined && res.previousClose !== undefined) {
+            const change = ((res.price - res.previousClose) / res.previousClose) * 100;
+            context += `Market Data for ${ticker}:\n- Current Price: ${res.price}\n- Previous Close: ${res.previousClose}\n- Today's Change: ${change.toFixed(2)}%\n\n`;
+          } else {
+            context += `Market Data for ${ticker} is currently unavailable or returned error: ${res.error || "Unknown Error"}\n\n`;
+          }
+        } catch (err: any) {
+          console.error(`Error fetching dynamic ticker ${ticker}:`, err);
+        }
+      }
+
+      // 4. Fetch Tavily web search results (if key is set)
+      if (env.TAVILY_API_KEY) {
+        try {
+          const searchContext = await fetchSearchContext(text, env.TAVILY_API_KEY);
+          if (searchContext) {
+            context += `${searchContext}\n\n`;
+          }
+        } catch (err) {
+          console.error("Error fetching search context:", err);
+        }
+      }
+
+      if (!ticker) {
+        // Fallback standard watch list prices for general context
+        context += `General Watchlist Data:\n`;
+        const defaultWatchlist = ["^GSPC", "^IXIC", "BTC-USD", "ETH-USD", "GC=F", "CL=F"];
+        const quotes = await Promise.all(defaultWatchlist.map(fetchSymbolChart));
+        for (const q of quotes) {
+          if (!q.error && q.price !== undefined) {
+            context += `- ${q.symbol}: ${q.price}\n`;
+          }
+        }
+      }
+
+      // 5. Query DeepSeek with context
+      const answer = await queryDeepSeek(text, context, env);
+
+      // 6. Deliver the Russian response
+      await sendTelegramMessage(chatId, answer, env);
+    }
   }
 }

@@ -11,5 +11,11 @@
   ],
   "triggers": {
     "crons": ["* * * * *"]
+  },
+  "vars": {
+    "DEEPSEEK_MODEL": "deepseek-chat",
+    "DEEPSEEK_MAX_TOKENS": "250",
+    "RATE_LIMIT_MAX_REQUESTS": "5",
+    "RATE_LIMIT_WINDOW_SECONDS": "60"
   }
 }

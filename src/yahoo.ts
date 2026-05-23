@@ -1,11 +1,11 @@
-interface ChartResult {
+export interface ChartResult {
   symbol: string;
   price?: number;
   previousClose?: number;
   error?: string;
 }
 
-async function fetchSymbolChart(symbol: string): Promise<ChartResult> {
+export async function fetchSymbolChart(symbol: string): Promise<ChartResult> {
   const url = `https://query2.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(symbol)}?interval=1d&range=1d`;
   
   try {
