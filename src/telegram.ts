@@ -2,6 +2,14 @@ import { Env } from "./types";
 import { getMarketSummary, fetchSymbolChart } from "./yahoo";
 import { fetchSearchContext } from "./search";
 import { queryDeepSeek } from "./deepseek";
+import { 
+  getTradingStats, 
+  getOpenTrades, 
+  formatTradingStatsCard, 
+  analyzeMarketAndDecide, 
+  formatTradeOpenedCard,
+  ASSET_NAMES
+} from "./trader";
 
 const PREDEFINED_TIMEZONES = [
   ["UTC", "Europe/Kyiv"],
@@ -10,7 +18,7 @@ const PREDEFINED_TIMEZONES = [
   ["Asia/Tokyo", "America/New_York"]
 ];
 
-export async function sendTelegramMessage(chatId: number, text: string, env: Env, keyboard?: any) {
+export async function sendTelegramMessage(chatId: number | string, text: string, env: Env, keyboard?: any) {
   const url = `https://api.telegram.org/bot${env.BOT_TOKEN}/sendMessage`;
   const payload: any = {
     chat_id: chatId,
@@ -34,6 +42,12 @@ export async function sendTelegramMessage(chatId: number, text: string, env: Env
     }
   } catch (error) {
     console.error("Failed to send Telegram message:", error);
+  }
+}
+
+export async function broadcastToTradingChannel(text: string, env: Env) {
+  if (env.TRADING_CHANNEL_ID) {
+    await sendTelegramMessage(env.TRADING_CHANNEL_ID, text, env);
   }
 }
 
@@ -323,6 +337,56 @@ export function extractAssetTicker(text: string): string | null {
   return null;
 }
 
+export async function handleStatsCommand(chatId: number | string, env: Env) {
+  const stats = await getTradingStats(env);
+  const openTrades = await getOpenTrades(env);
+  const text = formatTradingStatsCard(stats, openTrades);
+  await sendTelegramMessage(chatId, text, env);
+}
+
+export async function handleTradesCommand(chatId: number | string, env: Env) {
+  const openTrades = await getOpenTrades(env);
+  const { results: recentClosed } = await env.DB.prepare(
+    "SELECT * FROM paper_trades WHERE status != 'OPEN' ORDER BY closed_at DESC LIMIT 5"
+  ).all<any>();
+
+  let text = "📋 *ЖУРНАЛ СДЕЛОК FOX TRADER* 🦊\n\n";
+  if (openTrades.length > 0) {
+    text += "🔓 *АКТИВНЫЕ ПОЗИЦИИ:*\n";
+    for (const t of openTrades) {
+      const name = ASSET_NAMES[t.symbol] || t.symbol;
+      text += `• *${name}* (${t.direction})\n  Вход: $${t.entry_price} | TP: $${t.take_profit} | SL: $${t.stop_loss}\n  Стратегия: #${t.strategy_tag || "Manual"}\n`;
+    }
+    text += "\n";
+  } else {
+    text += "🔓 *АКТИВНЫЕ ПОЗИЦИИ:* Нет\n\n";
+  }
+
+  if (recentClosed && recentClosed.length > 0) {
+    text += "📜 *ПОСЛЕДНИЕ ЗАКРЫТЫЕ СДЕЛКИ:*\n";
+    for (const t of recentClosed) {
+      const name = ASSET_NAMES[t.symbol] || t.symbol;
+      const icon = t.status === "CLOSED_TP" ? "🎯" : "🛑";
+      const sign = (t.pnl_percent || 0) >= 0 ? "+" : "";
+      text += `${icon} *${name}* (${t.direction}): *${sign}${t.pnl_percent}%* (${sign}${t.r_multiple}R)\n  Выход: $${t.exit_price}\n`;
+    }
+  }
+
+  await sendTelegramMessage(chatId, text, env);
+}
+
+export async function handleManualScanCommand(chatId: number | string, env: Env) {
+  await sendTelegramMessage(chatId, "🔍 *Запуск анализа рынка и поиска торговых сетапов...*", env);
+  const { trade, rationale } = await analyzeMarketAndDecide(env);
+  if (trade) {
+    const card = formatTradeOpenedCard(trade);
+    await sendTelegramMessage(chatId, card, env);
+    await broadcastToTradingChannel(card, env);
+  } else {
+    await sendTelegramMessage(chatId, `⏸️ *Решение ИИ:* ${rationale}`, env);
+  }
+}
+
 export async function routeWebhookUpdate(update: any, env: Env) {
   if (update.callback_query) {
     await handleCallbackQuery(update.callback_query, env);
@@ -337,6 +401,12 @@ export async function routeWebhookUpdate(update: any, env: Env) {
 
   if (text.startsWith("/start")) {
     await handleStartCommand(chatId, env);
+  } else if (text.startsWith("/stats") || text.startsWith("/trader")) {
+    await handleStatsCommand(chatId, env);
+  } else if (text.startsWith("/trades") || text.startsWith("/journal")) {
+    await handleTradesCommand(chatId, env);
+  } else if (text.startsWith("/scan") || text.startsWith("/tradescan")) {
+    await handleManualScanCommand(chatId, env);
   } else if (text.startsWith("/settimezone")) {
     const parts = text.split(" ");
     if (parts.length < 2) {
