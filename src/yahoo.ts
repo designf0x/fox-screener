@@ -36,7 +36,7 @@ export async function fetchSymbolChart(symbol: string): Promise<ChartResult> {
   }
 }
 
-export async function getMarketSummary(watchlistStr: string, tzName: string): Promise<string> {
+export async function getMarketSummary(watchlistStr: string, tzName: string, channelId?: string): Promise<string> {
   const symbols = watchlistStr.split(",").map(s => s.trim());
 
   try {
@@ -130,7 +130,18 @@ export async function getMarketSummary(watchlistStr: string, tzName: string): Pr
       nowStr = formatter.format(new Date());
     }
 
-    return `📈 *Markets on ${nowStr}:*\n\n` + lines.join("\n").trim();
+    // CTA with link to the Virtual Trader Telegram channel
+    const channelHandle = channelId || "@foxintraday";
+    let channelUrl = "https://t.me/foxintraday";
+    if (channelHandle.startsWith("@")) {
+      channelUrl = `https://t.me/${channelHandle.slice(1)}`;
+    } else if (channelHandle.startsWith("http")) {
+      channelUrl = channelHandle;
+    }
+
+    const cta = `\n\n🎯 *Сделки и сигналы ИИ-трейдера:* [${channelHandle}](${channelUrl})`;
+
+    return `📈 *Markets on ${nowStr}:*\n\n` + lines.join("\n").trim() + cta;
   } catch (error: any) {
     console.error("Error creating market summary:", error);
     return `⚠️ *Markets*: Failed to compile summary. (${error.message || "Connection Error"})`;

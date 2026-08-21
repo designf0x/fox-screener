@@ -149,7 +149,7 @@ export async function handleNowCommand(chatId: number, env: Env) {
   const tzName = existing?.timezone || "UTC";
   const watchlist = existing?.watchlist || "^GSPC,^IXIC,BTC-USD,ETH-USD,GC=F,CL=F";
 
-  const summary = await getMarketSummary(watchlist, tzName);
+  const summary = await getMarketSummary(watchlist, tzName, env.TRADING_CHANNEL_ID);
   await sendTelegramMessage(chatId, summary, env);
 }
 

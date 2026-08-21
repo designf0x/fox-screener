@@ -40,7 +40,7 @@ export async function handleScheduledBriefings(env: Env) {
 
       if (currentHour === hour && currentMinute === minute) {
         console.log(`Triggering scheduled daily briefing for user ${chat_id} at ${hour}:${minute} (${timezone}).`);
-        const summary = await getMarketSummary(watchlist, timezone);
+        const summary = await getMarketSummary(watchlist, timezone, env.TRADING_CHANNEL_ID);
         await sendTelegramMessage(chat_id, summary, env);
       }
     } catch (e) {
@@ -99,7 +99,7 @@ export default {
     // Diagnostics: Screener market summary test
     if (request.method === "GET" && url.pathname === "/test") {
       try {
-        const summary = await getMarketSummary("^GSPC,^IXIC,BTC-USD,ETH-USD,GC=F,CL=F", "Asia/Singapore");
+        const summary = await getMarketSummary("^GSPC,^IXIC,BTC-USD,ETH-USD,GC=F,CL=F", "Asia/Singapore", env.TRADING_CHANNEL_ID);
         return new Response(summary, {
           headers: { "Content-Type": "text/plain; charset=utf-8" }
         });
