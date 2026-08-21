@@ -162,6 +162,27 @@ export default {
       }
     }
 
+    // Diagnostics: Send test card to TRADING_CHANNEL_ID
+    if (request.method === "GET" && url.pathname === "/test/trader/ping") {
+      if (!env.TRADING_CHANNEL_ID) {
+        return new Response(JSON.stringify({ error: "TRADING_CHANNEL_ID secret is not set." }), {
+          status: 400,
+          headers: { "Content-Type": "application/json" }
+        });
+      }
+      try {
+        const stats = await getTradingStats(env);
+        const openTrades = await getOpenTrades(env);
+        const card = formatTradingStatsCard(stats, openTrades);
+        await broadcastToTradingChannel(card, env);
+        return new Response(JSON.stringify({ success: true, message: `Sent test card to ${env.TRADING_CHANNEL_ID}`, card }, null, 2), {
+          headers: { "Content-Type": "application/json" }
+        });
+      } catch (err: any) {
+        return new Response(JSON.stringify({ error: err.message }), { status: 500, headers: { "Content-Type": "application/json" } });
+      }
+    }
+
     // Webhooks are exclusively POST requests
     if (request.method !== "POST") {
       return new Response("Method Not Allowed", { status: 405 });
