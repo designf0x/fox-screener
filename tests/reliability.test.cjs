@@ -327,3 +327,21 @@ test('Performance extremes come from real closed trades', async () => {
   f.db.exec('UPDATE paper_trades SET pnl_percent=-pnl_percent');
   assert.equal((await trader.getTradingStats(f.env)).worstTradePnl, 2);
 });
+
+test('Daily trading stats broadcast publishes to channel at configured hour', async () => {
+  const f = fixture();
+  f.env.DAILY_STATS_HOUR = '21';
+  f.env.TRADING_CHANNEL_ID = '@test_channel';
+  f.addTrade('BTC-USD', 'CLOSED_TP', 10);
+
+  // Does not send at 20:00
+  await index.handleScheduledDailyStats(f.env, new Date('2026-09-05T20:00:00Z'));
+  assert.equal(f.state.sent.length, 0);
+
+  // Sends at 21:00 to channel
+  await index.handleScheduledDailyStats(f.env, new Date('2026-09-05T21:00:00Z'));
+  assert.equal(f.state.sent.length, 1);
+  assert.equal(f.state.sent[0].chat_id, '@test_channel');
+  assert.ok(f.state.sent[0].text.includes('СТАТИСТИКА FOX VIRTUAL TRADER'));
+});
+

@@ -131,6 +131,7 @@ Configure the new secrets and register the authenticated webhook before deployin
 - Trade changes enqueue notifications atomically. Pending notifications are retried each minute with backoff and in order per trade. If the channel is not configured, they remain pending. A lost Telegram response after successful acceptance can still cause a duplicate message on retry; the trade itself is not duplicated.
 - Duplicate Telegram update IDs are claimed in D1. Failed processing returns 503 for retry; crashed claims expire after ten minutes. A unique trade source key preserves an already committed scan across retries.
 - Manual scans charge the provider's reported token usage, including HOLD and rejected setups. The daily limit gates new requests; an already admitted request can cross the remaining token allowance. Trusted diagnostics and scheduled scans are separate administrative operations, outside per-chat quotas.
+- Daily trading stats are automatically published to the configured trading channel once every day at 21:00 UTC (configurable via `DAILY_STATS_HOUR`).
 
 ---
 

@@ -88,6 +88,30 @@ export async function handleScheduledTradingScans(env: Env, now = new Date()) {
   }
 }
 
+/**
+ * Daily Trading Stats Broadcast to the Trading Channel.
+ * Triggered at the configured DAILY_STATS_HOUR (default 21:00 UTC).
+ */
+export async function handleScheduledDailyStats(env: Env, now = new Date()) {
+  const utcHour = now.getUTCHours();
+  const utcMinute = now.getUTCMinutes();
+  const targetHour = Number(env.DAILY_STATS_HOUR || "21");
+  const targetMinute = Number(env.DAILY_STATS_MINUTE || "0");
+
+  if (utcHour === targetHour && utcMinute === targetMinute) {
+    if (!env.TRADING_CHANNEL_ID) return;
+    try {
+      console.log(`Publishing daily trading stats to channel at ${utcHour}:${utcMinute} UTC...`);
+      const stats = await getTradingStats(env);
+      const openTrades = await getOpenTrades(env);
+      const card = formatTradingStatsCard(stats, openTrades);
+      await broadcastToTradingChannel(card, env);
+    } catch (err) {
+      console.error("Error publishing daily trading stats:", err);
+    }
+  }
+}
+
 export default {
   async fetch(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
     const url = new URL(request.url);
@@ -202,6 +226,7 @@ export default {
       (async () => {
         await handleScheduledTradingChecks(env);
         await handleScheduledTradingScans(env, scheduledAt);
+        await handleScheduledDailyStats(env, scheduledAt);
       })()
     ]));
   }

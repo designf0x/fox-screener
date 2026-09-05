@@ -14,6 +14,8 @@ export interface Env {
   RATE_LIMIT_MAX_REQUESTS?: string;
   RATE_LIMIT_WINDOW_SECONDS?: string;
   DAILY_TOKEN_LIMIT?: string;
+  DAILY_STATS_HOUR?: string;
+  DAILY_STATS_MINUTE?: string;
 }
 
 export interface UserSettings {
