@@ -2,6 +2,8 @@ export interface ChartResult {
   symbol: string;
   price?: number;
   previousClose?: number;
+  quoteTime?: number;
+  marketOpen?: boolean;
   error?: string;
 }
 
@@ -10,6 +12,7 @@ export async function fetchSymbolChart(symbol: string): Promise<ChartResult> {
   
   try {
     const response = await fetch(url, {
+      signal: AbortSignal.timeout(15000),
       headers: {
         "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
       }
@@ -26,17 +29,33 @@ export async function fetchSymbolChart(symbol: string): Promise<ChartResult> {
       return { symbol, error: "Empty metadata" };
     }
 
+    const regular = meta.currentTradingPeriod?.regular;
+    const now = Math.floor(Date.now() / 1000);
     return {
       symbol,
       price: meta.regularMarketPrice,
-      previousClose: meta.previousClose || meta.chartPreviousClose
+      previousClose: meta.previousClose ?? meta.chartPreviousClose,
+      quoteTime: meta.regularMarketTime,
+      marketOpen: regular ? now >= regular.start && now < regular.end : undefined
     };
   } catch (err: any) {
     return { symbol, error: err.message || "Fetch Error" };
   }
 }
 
-export async function getMarketSummary(watchlistStr: string, tzName: string, channelId?: string): Promise<string> {
+export function isFreshQuote(quote: ChartResult, maxAgeSeconds = 300): quote is ChartResult & { price: number } {
+  const now = Date.now() / 1000;
+  return !quote.error && Number.isFinite(quote.price) && quote.price! > 0 &&
+    Number.isFinite(quote.quoteTime) && quote.quoteTime! <= now + 60 &&
+    now - quote.quoteTime! <= maxAgeSeconds;
+}
+
+export function isTradableQuote(quote: ChartResult, maxAgeSeconds = 300): quote is ChartResult & { price: number; previousClose: number } {
+  return isFreshQuote(quote, maxAgeSeconds) && Number.isFinite(quote.previousClose) && quote.previousClose! > 0 &&
+    (quote.symbol.endsWith("-USD") || quote.marketOpen === true);
+}
+
+export async function getMarketSummary(watchlistStr: string, tzName: string, channelId?: string, channelLink?: string): Promise<string> {
   const symbols = watchlistStr.split(",").map(s => s.trim());
 
   try {
@@ -131,15 +150,9 @@ export async function getMarketSummary(watchlistStr: string, tzName: string, cha
     }
 
     // CTA with link to the Virtual Trader Telegram channel
-    const channelHandle = channelId || "@foxintraday";
-    let channelUrl = "https://t.me/foxintraday";
-    if (channelHandle.startsWith("@")) {
-      channelUrl = `https://t.me/${channelHandle.slice(1)}`;
-    } else if (channelHandle.startsWith("http")) {
-      channelUrl = channelHandle;
-    }
-
-    const cta = `\n\n🎯 *Сделки и сигналы ИИ-трейдера:* [${channelHandle}](${channelUrl})`;
+    const channelUrl = channelLink || (channelId?.startsWith("@") ? `https://t.me/${channelId.slice(1)}` : undefined);
+    const validLink = channelUrl && /^https:\/\/t\.me\/[A-Za-z0-9_+/?=-]+$/.test(channelUrl);
+    const cta = validLink ? `\n\n🎯 *Сделки и сигналы ИИ-трейдера:* [Открыть канал](${channelUrl})` : "";
 
     return `📈 *Markets on ${nowStr}:*\n\n` + lines.join("\n").trim() + cta;
   } catch (error: any) {

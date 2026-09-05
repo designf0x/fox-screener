@@ -1,0 +1,10 @@
+# Copy to .dev.vars and replace these placeholders; do not commit credentials.
+BOT_TOKEN=replace-with-local-bot-token
+WEBHOOK_SECRET=replace-with-a-random-webhook-secret
+DIAGNOSTICS_TOKEN=replace-with-a-different-random-diagnostics-secret
+DEEPSEEK_API_KEY=replace-with-deepseek-key
+# Optional:
+# TRADING_CHANNEL_ID=@your_channel
+# TRADING_CHANNEL_URL=https://t.me/your_channel
+# BOT_USERNAME=FoxScreenerBot
+# TAVILY_API_KEY=replace-with-tavily-key

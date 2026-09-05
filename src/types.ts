@@ -1,7 +1,11 @@
 export interface Env {
   DB: D1Database;
   BOT_TOKEN: string;
+  WEBHOOK_SECRET?: string;
+  DIAGNOSTICS_TOKEN?: string;
   TRADING_CHANNEL_ID?: string;
+  TRADING_CHANNEL_URL?: string;
+  MAX_QUOTE_AGE_SECONDS?: string;
   DEEPSEEK_API_KEY?: string;
   DEEPSEEK_MODEL?: string;
   DEEPSEEK_MAX_TOKENS?: string;
@@ -23,6 +27,7 @@ export interface UserSettings {
 
 export interface PaperTrade {
   id: number;
+  source_key?: string | null;
   symbol: string;
   direction: "LONG" | "SHORT";
   entry_price: number;

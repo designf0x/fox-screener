@@ -1,6 +1,7 @@
 import { Env, PaperTrade, TradeDecision, ClosedTradeEvent, TraderStats } from "./types";
-import { fetchSymbolChart } from "./yahoo";
+import { fetchSymbolChart, isFreshQuote, isTradableQuote } from "./yahoo";
 import { fetchSearchContext } from "./search";
+import { escapeMarkdown } from "./messaging";
 
 export const DEFAULT_SCREENER_PAIRS = ["BTC-USD", "ETH-USD", "GC=F", "CL=F", "^GSPC", "^IXIC"];
 
@@ -13,10 +14,19 @@ export const ASSET_NAMES: Record<string, string> = {
   "^IXIC": "NASDAQ Composite"
 };
 
-/**
- * Executes a quantitative market scan with DeepSeek and opens a paper trade if a valid setup is identified.
- */
-export async function analyzeMarketAndDecide(env: Env): Promise<{ trade: PaperTrade | null; rationale: string }> {
+export async function getTradeBySourceKey(env: Env, sourceKey: string): Promise<PaperTrade | null> {
+  return env.DB.prepare("SELECT * FROM paper_trades WHERE source_key = ?").bind(sourceKey).first<PaperTrade>();
+}
+
+/** Executes a market scan and atomically opens at most one valid paper trade. */
+export async function analyzeMarketAndDecide(env: Env, options: {
+  sourceKey?: string;
+  onTokenUsage?: (tokens: number) => Promise<void>;
+} = {}): Promise<{ trade: PaperTrade | null; rationale: string }> {
+  if (options.sourceKey) {
+    const previous = await getTradeBySourceKey(env, options.sourceKey);
+    if (previous) return { trade: previous, rationale: previous.setup_reasoning || "Previously opened trade." };
+  }
   const apiKey = env.DEEPSEEK_API_KEY;
   if (!apiKey) {
     return { trade: null, rationale: "DeepSeek API key not configured" };
@@ -43,11 +53,12 @@ export async function analyzeMarketAndDecide(env: Env): Promise<{ trade: PaperTr
 
   // 2. Fetch current prices & daily metrics for available screener pairs
   const marketQuotes = await Promise.all(availablePairs.map(fetchSymbolChart));
+  const maxQuoteAge = Number(env.MAX_QUOTE_AGE_SECONDS || "300");
   let marketSummary = "Текущие рыночные котировки:\n";
   const validQuotes = new Map<string, number>();
 
   for (const q of marketQuotes) {
-    if (!q.error && q.price !== undefined && q.previousClose !== undefined) {
+    if (isTradableQuote(q, maxQuoteAge)) {
       const change = ((q.price - q.previousClose) / q.previousClose) * 100;
       validQuotes.set(q.symbol, q.price);
       marketSummary += `- ${q.symbol} (${ASSET_NAMES[q.symbol] || q.symbol}): Текущая цена = ${q.price}, Изменение за день = ${change >= 0 ? "+" : ""}${change.toFixed(2)}%\n`;
@@ -100,6 +111,7 @@ You MUST respond with pure JSON only (no markdown code blocks, no backticks, no 
 
   const modelName = env.DEEPSEEK_MODEL || "deepseek-chat";
   const response = await fetch("https://api.deepseek.com/chat/completions", {
+    signal: AbortSignal.timeout(60000),
     method: "POST",
     headers: {
       "Content-Type": "application/json",
@@ -123,6 +135,7 @@ You MUST respond with pure JSON only (no markdown code blocks, no backticks, no 
   }
 
   const data: any = await response.json();
+  if (options.onTokenUsage) await options.onTokenUsage(Number(data.usage?.total_tokens) || 0);
   const rawContent = data.choices?.[0]?.message?.content?.trim();
   if (!rawContent) {
     return { trade: null, rationale: "Empty AI response" };
@@ -138,10 +151,10 @@ You MUST respond with pure JSON only (no markdown code blocks, no backticks, no 
     return { trade: null, rationale: `JSON parse error: ${rawContent.slice(0, 100)}` };
   }
 
-  if (decision.action !== "OPEN_TRADE" || !decision.symbol || !decision.direction || !decision.stopLoss || !decision.takeProfit) {
+  if (!decision || decision.action !== "OPEN_TRADE" || !decision.symbol || !decision.direction || !decision.stopLoss || !decision.takeProfit) {
     return {
       trade: null,
-      rationale: decision.reasoning || "AI decided to HOLD (no high-confidence setup found)."
+      rationale: typeof decision?.reasoning === "string" ? decision.reasoning : "AI decided to HOLD (no high-confidence setup found)."
     };
   }
 
@@ -150,10 +163,17 @@ You MUST respond with pure JSON only (no markdown code blocks, no backticks, no 
     return { trade: null, rationale: `Symbol ${decision.symbol} is not valid or has no live price.` };
   }
 
-  // Use actual live market price as entry price
-  const entryPrice = livePrice;
+  // Reprice after inference; the quote used in the prompt may already be stale.
+  const entryQuote = await fetchSymbolChart(decision.symbol);
+  if (!isTradableQuote(entryQuote, maxQuoteAge)) {
+    return { trade: null, rationale: "Fresh tradable entry quote unavailable." };
+  }
+  const entryPrice = entryQuote.price;
   const sl = Number(decision.stopLoss);
   const tp = Number(decision.takeProfit);
+  if (!Number.isFinite(sl) || !Number.isFinite(tp) || sl <= 0 || tp <= 0) {
+    return { trade: null, rationale: "Invalid numeric trade levels." };
+  }
 
   // Validate R:R and logical boundaries
   let rr = 0;
@@ -175,16 +195,20 @@ You MUST respond with pure JSON only (no markdown code blocks, no backticks, no 
     return { trade: null, rationale: `Unknown direction: ${decision.direction}` };
   }
 
-  if (rr < 1.1) {
+  if (!Number.isFinite(rr) || rr < 1.5) {
     return { trade: null, rationale: `Risk/Reward ratio (${rr.toFixed(2)}) is below minimum threshold.` };
   }
 
   // 5. Insert trade into Cloudflare D1
-  const insertResult = await env.DB.prepare(
+  const createdTrade = await env.DB.prepare(
     `INSERT INTO paper_trades (
       symbol, direction, entry_price, stop_loss, take_profit, risk_reward_ratio, 
-      status, setup_reasoning, strategy_tag, opened_at
-    ) VALUES (?, ?, ?, ?, ?, ?, 'OPEN', ?, ?, CURRENT_TIMESTAMP)`
+      status, setup_reasoning, strategy_tag, source_key, opened_at
+    ) SELECT ?, ?, ?, ?, ?, ?, 'OPEN', ?, ?, ?, CURRENT_TIMESTAMP
+      WHERE (SELECT COUNT(*) FROM paper_trades WHERE status = 'OPEN') < 3
+        AND NOT EXISTS (SELECT 1 FROM paper_trades WHERE status = 'OPEN' AND symbol = ?)
+      ON CONFLICT(source_key) DO NOTHING
+      RETURNING *`
   )
     .bind(
       decision.symbol,
@@ -193,32 +217,19 @@ You MUST respond with pure JSON only (no markdown code blocks, no backticks, no 
       sl,
       tp,
       Number(rr.toFixed(2)),
-      decision.reasoning || "Technical setup identified by DeepSeek",
-      decision.strategyTag || "TrendFollowing"
+      typeof decision.reasoning === "string" ? decision.reasoning : "Technical setup identified by DeepSeek",
+      typeof decision.strategyTag === "string" ? decision.strategyTag : "TrendFollowing",
+      options.sourceKey || null,
+      decision.symbol
     )
-    .run();
+    .first<PaperTrade>();
 
-  const newTradeId = insertResult.meta?.last_row_id || 0;
+  if (!createdTrade) {
+    const previous = options.sourceKey ? await getTradeBySourceKey(env, options.sourceKey) : null;
+    return { trade: previous, rationale: previous?.setup_reasoning || "Position limit reached by another scan." };
+  }
 
-  const createdTrade: PaperTrade = {
-    id: newTradeId,
-    symbol: decision.symbol,
-    direction: decision.direction,
-    entry_price: entryPrice,
-    stop_loss: sl,
-    take_profit: tp,
-    risk_reward_ratio: Number(rr.toFixed(2)),
-    status: "OPEN",
-    exit_price: null,
-    pnl_percent: null,
-    r_multiple: null,
-    setup_reasoning: decision.reasoning || null,
-    strategy_tag: decision.strategyTag || "TrendFollowing",
-    opened_at: new Date().toISOString(),
-    closed_at: null
-  };
-
-  return { trade: createdTrade, rationale: decision.reasoning || "Trade opened successfully." };
+  return { trade: createdTrade, rationale: createdTrade.setup_reasoning || "Trade opened successfully." };
 }
 
 /**
@@ -245,7 +256,7 @@ export async function checkOpenPositions(env: Env): Promise<ClosedTradeEvent[]> 
   for (const trade of openTrades) {
     try {
       const quote = await fetchSymbolChart(trade.symbol);
-      if (quote.error || quote.price === undefined) {
+      if (!isFreshQuote(quote, Number(env.MAX_QUOTE_AGE_SECONDS || "300"))) {
         continue;
       }
 
@@ -288,13 +299,14 @@ export async function checkOpenPositions(env: Env): Promise<ClosedTradeEvent[]> 
 
       if (isClosed) {
         const finalStatus = reason === "TP" ? "CLOSED_TP" : "CLOSED_SL";
-        await env.DB.prepare(
+        const updated = await env.DB.prepare(
           `UPDATE paper_trades 
            SET status = ?, exit_price = ?, pnl_percent = ?, r_multiple = ?, closed_at = CURRENT_TIMESTAMP 
-           WHERE id = ?`
+           WHERE id = ? AND status = 'OPEN'`
         )
           .bind(finalStatus, exitPrice, Number(pnlPercent.toFixed(2)), Number(rMultiple.toFixed(2)), trade.id)
           .run();
+        if (!updated.meta.changes) continue;
 
         const updatedTrade: PaperTrade = {
           ...trade,
@@ -339,8 +351,8 @@ export async function getTradingStats(env: Env): Promise<TraderStats> {
   let totalR = 0;
   let grossProfit = 0;
   let grossLoss = 0;
-  let bestPnl = 0;
-  let worstPnl = 0;
+  let bestPnl = closedTrades[0]?.pnl_percent || 0;
+  let worstPnl = closedTrades[0]?.pnl_percent || 0;
 
   for (const t of closedTrades) {
     const pnl = t.pnl_percent || 0;
@@ -397,8 +409,8 @@ export function formatTradeOpenedCard(trade: PaperTrade): string {
     `🛑 *Stop Loss:* $${trade.stop_loss.toLocaleString("en-US")} (-${slPct}%)\n` +
     `🎯 *Take Profit:* $${trade.take_profit.toLocaleString("en-US")} (+${tpPct}%)\n` +
     `⚖️ *Риск / Прибыль (R:R):* 1 : ${trade.risk_reward_ratio}\n` +
-    `🏷️ *Стратегия:* #${trade.strategy_tag || "Technical"}\n\n` +
-    `🧠 *Обоснование сделки (DeepSeek):*\n${trade.setup_reasoning || "Сформирован сетап по стратегии."}\n\n` +
+    `🏷️ *Стратегия:* #${escapeMarkdown(trade.strategy_tag || "Technical")}\n\n` +
+    `🧠 *Обоснование сделки (DeepSeek):*\n${escapeMarkdown(trade.setup_reasoning || "Сформирован сетап по стратегии.")}\n\n` +
     `_Позиция отслеживается автоматически в реальном времени._`
   );
 }
@@ -419,7 +431,7 @@ export function formatTradeClosedCard(event: ClosedTradeEvent): string {
     `📈 *Позиция:* ${trade.direction}\n` +
     `💵 *Вход:* $${trade.entry_price.toLocaleString("en-US")} ➔ *Выход:* $${exitPrice.toLocaleString("en-US")}\n` +
     `📈 *Результат:* *${pnlSign}${pnlPercent}%* (${pnlSign}${rMultiple}R)\n` +
-    `🏷️ *Стратегия:* #${trade.strategy_tag || "Technical"}\n\n` +
+    `🏷️ *Стратегия:* #${escapeMarkdown(trade.strategy_tag || "Technical")}\n\n` +
     `_Сделка #${trade.id} закрыта и занесена в статистику журнала._`
   );
 }
@@ -436,7 +448,7 @@ export function formatTradingStatsCard(stats: TraderStats, openTrades: PaperTrad
             `${pnlEmoji} *Общий PnL:* *${pnlSign}${stats.totalPnlPercent}%*\n` +
             `📈 *Средний R-множитель:* ${stats.averageR}R\n` +
             `⚖️ *Профит-фактор:* ${stats.profitFactor}\n` +
-            `🔝 *Лучшая сделка:* +${stats.bestTradePnl}%\n` +
+            `🔝 *Лучшая сделка:* ${stats.bestTradePnl >= 0 ? "+" : ""}${stats.bestTradePnl}%\n` +
             `🔻 *Худшая сделка:* ${stats.worstTradePnl}%\n` +
             `📋 *Всего сделок:* ${stats.totalTrades} (Закрыто: ${stats.closedTrades})\n\n`;
 

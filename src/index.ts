@@ -1,5 +1,7 @@
 import { Env } from "./types";
-import { routeWebhookUpdate, sendTelegramMessage, broadcastToTradingChannel } from "./telegram";
+import { sendTelegramMessage, broadcastToTradingChannel } from "./messaging";
+import { flushTradeNotifications } from "./notifications";
+import { matchesSecret, processWebhook } from "./webhook";
 import { getMarketSummary } from "./yahoo";
 import { 
   analyzeMarketAndDecide, 
@@ -7,19 +9,16 @@ import {
   getTradingStats, 
   getOpenTrades,
   formatTradeOpenedCard, 
-  formatTradeClosedCard, 
   formatTradingStatsCard 
 } from "./trader";
 
-export async function handleScheduledBriefings(env: Env) {
+export async function handleScheduledBriefings(env: Env, now = new Date()) {
   // Query all users that have both timezone and delivery time set
   const { results } = await env.DB.prepare(
     "SELECT chat_id, timezone, hour, minute, watchlist FROM user_settings WHERE hour IS NOT NULL AND minute IS NOT NULL"
   ).all<any>();
 
   if (!results || results.length === 0) return;
-
-  const now = new Date();
 
   for (const user of results) {
     const { chat_id, timezone, hour, minute, watchlist } = user;
@@ -40,7 +39,7 @@ export async function handleScheduledBriefings(env: Env) {
 
       if (currentHour === hour && currentMinute === minute) {
         console.log(`Triggering scheduled daily briefing for user ${chat_id} at ${hour}:${minute} (${timezone}).`);
-        const summary = await getMarketSummary(watchlist, timezone, env.TRADING_CHANNEL_ID);
+        const summary = await getMarketSummary(watchlist, timezone, env.TRADING_CHANNEL_ID, env.TRADING_CHANNEL_URL);
         await sendTelegramMessage(chat_id, summary, env);
       }
     } catch (e) {
@@ -57,9 +56,8 @@ export async function handleScheduledTradingChecks(env: Env) {
     const closedEvents = await checkOpenPositions(env);
     for (const event of closedEvents) {
       console.log(`Position ${event.trade.id} (${event.trade.symbol}) closed via ${event.reason}. PnL: ${event.pnlPercent}%`);
-      const card = formatTradeClosedCard(event);
-      await broadcastToTradingChannel(card, env);
     }
+    await flushTradeNotifications(env);
   } catch (err) {
     console.error("Error during scheduled position check:", err);
   }
@@ -68,8 +66,7 @@ export async function handleScheduledTradingChecks(env: Env) {
 /**
  * 3x Daily Quantitative Scan (00:00 Asian Open, 08:00 London Open, 14:00 NY Open UTC).
  */
-export async function handleScheduledTradingScans(env: Env) {
-  const now = new Date();
+export async function handleScheduledTradingScans(env: Env, now = new Date()) {
   const utcHour = now.getUTCHours();
   const utcMinute = now.getUTCMinutes();
 
@@ -78,11 +75,10 @@ export async function handleScheduledTradingScans(env: Env) {
   if (scanHours.includes(utcHour) && utcMinute === 0) {
     console.log(`Executing 3x daily quantitative trading scan at ${utcHour}:00 UTC...`);
     try {
-      const { trade, rationale } = await analyzeMarketAndDecide(env);
+      const { trade, rationale } = await analyzeMarketAndDecide(env, { sourceKey: `cron:${Math.floor(now.getTime() / 60000)}` });
       if (trade) {
         console.log(`New trade opened by DeepSeek: #${trade.id} ${trade.symbol} ${trade.direction}`);
-        const card = formatTradeOpenedCard(trade);
-        await broadcastToTradingChannel(card, env);
+        await flushTradeNotifications(env);
       } else {
         console.log(`Market scan completed with no trade opened: ${rationale}`);
       }
@@ -95,11 +91,20 @@ export async function handleScheduledTradingScans(env: Env) {
 export default {
   async fetch(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
     const url = new URL(request.url);
+    const isDiagnostic = url.pathname === "/test" || url.pathname.startsWith("/test/");
+    if (isDiagnostic) {
+      if (!env.DIAGNOSTICS_TOKEN) return new Response("Diagnostics disabled", { status: 503 });
+      if (!await matchesSecret(request.headers.get("Authorization"), `Bearer ${env.DIAGNOSTICS_TOKEN}`)) {
+        return new Response("Unauthorized", { status: 401 });
+      }
+      const mutating = ["/test/trader/scan", "/test/trader/check", "/test/trader/ping"].includes(url.pathname);
+      if (request.method !== (mutating ? "POST" : "GET")) return new Response("Method Not Allowed", { status: 405 });
+    }
 
     // Diagnostics: Screener market summary test
     if (request.method === "GET" && url.pathname === "/test") {
       try {
-        const summary = await getMarketSummary("^GSPC,^IXIC,BTC-USD,ETH-USD,GC=F,CL=F", "Asia/Singapore", env.TRADING_CHANNEL_ID);
+        const summary = await getMarketSummary("^GSPC,^IXIC,BTC-USD,ETH-USD,GC=F,CL=F", "Asia/Singapore", env.TRADING_CHANNEL_ID, env.TRADING_CHANNEL_URL);
         return new Response(summary, {
           headers: { "Content-Type": "text/plain; charset=utf-8" }
         });
@@ -109,14 +114,12 @@ export default {
     }
 
     // Diagnostics: Paper Trader manual scan trigger
-    if (request.method === "GET" && url.pathname === "/test/trader/scan") {
+    if (request.method === "POST" && url.pathname === "/test/trader/scan") {
       try {
         const result = await analyzeMarketAndDecide(env);
         if (result.trade) {
           const card = formatTradeOpenedCard(result.trade);
-          if (url.searchParams.get("broadcast") === "true") {
-            await broadcastToTradingChannel(card, env);
-          }
+          await flushTradeNotifications(env);
           return new Response(JSON.stringify({ success: true, trade: result.trade, card }, null, 2), {
             headers: { "Content-Type": "application/json" }
           });
@@ -131,15 +134,10 @@ export default {
     }
 
     // Diagnostics: Paper Trader position check trigger
-    if (request.method === "GET" && url.pathname === "/test/trader/check") {
+    if (request.method === "POST" && url.pathname === "/test/trader/check") {
       try {
         const closedEvents = await checkOpenPositions(env);
-        for (const event of closedEvents) {
-          const card = formatTradeClosedCard(event);
-          if (url.searchParams.get("broadcast") === "true") {
-            await broadcastToTradingChannel(card, env);
-          }
-        }
+        await flushTradeNotifications(env);
         return new Response(JSON.stringify({ success: true, closedEvents }, null, 2), {
           headers: { "Content-Type": "application/json" }
         });
@@ -163,7 +161,7 @@ export default {
     }
 
     // Diagnostics: Send test card to TRADING_CHANNEL_ID
-    if (request.method === "GET" && url.pathname === "/test/trader/ping") {
+    if (request.method === "POST" && url.pathname === "/test/trader/ping") {
       if (!env.TRADING_CHANNEL_ID) {
         return new Response(JSON.stringify({ error: "TRADING_CHANNEL_ID secret is not set." }), {
           status: 400,
@@ -188,25 +186,23 @@ export default {
       return new Response("Method Not Allowed", { status: 405 });
     }
 
-    try {
-      const update: any = await request.json();
-      await routeWebhookUpdate(update, env);
-    } catch (error: any) {
-      console.error("Error routing webhook update:", error);
+    if (isDiagnostic) return new Response("Not Found", { status: 404 });
+    if (!env.WEBHOOK_SECRET) return new Response("Webhook is not configured", { status: 503 });
+    if (!await matchesSecret(request.headers.get("X-Telegram-Bot-Api-Secret-Token"), env.WEBHOOK_SECRET)) {
+      return new Response("Unauthorized", { status: 401 });
     }
-
-    return new Response("OK", { status: 200 });
+    return processWebhook(request, env);
   },
 
   async scheduled(controller: ScheduledController, env: Env, ctx: ExecutionContext): Promise<void> {
     console.log(`Cron schedule triggered at: ${new Date().toISOString()}`);
-    ctx.waitUntil(
-      Promise.all([
-        handleScheduledBriefings(env),
-        handleScheduledTradingChecks(env),
-        handleScheduledTradingScans(env)
-      ])
-    );
+    const scheduledAt = new Date(controller.scheduledTime);
+    ctx.waitUntil(Promise.all([
+      handleScheduledBriefings(env, scheduledAt),
+      (async () => {
+        await handleScheduledTradingChecks(env);
+        await handleScheduledTradingScans(env, scheduledAt);
+      })()
+    ]));
   }
 };
-

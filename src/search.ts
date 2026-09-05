@@ -13,6 +13,7 @@ export async function fetchSearchContext(query: string, apiKey?: string): Promis
 
   try {
     const response = await fetch(url, {
+      signal: AbortSignal.timeout(15000),
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(payload)
